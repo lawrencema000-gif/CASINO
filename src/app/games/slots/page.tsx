@@ -39,17 +39,30 @@ type GamePhase =
 const PAYLINE_COLORS = ["#FFD700", "#00FF88", "#60A5FA", "#F472B6", "#A78BFA"];
 const PAYLINE_LABELS = ["TOP", "MID", "BOT", "D1", "D2"];
 
-/* Symbol gradient backgrounds by id */
-const SYMBOL_BG: Record<string, string> = {
-  seven: "radial-gradient(circle, rgba(239,68,68,0.25) 0%, transparent 70%)",
-  diamond: "radial-gradient(circle, rgba(96,165,250,0.25) 0%, transparent 70%)",
-  bell: "radial-gradient(circle, rgba(255,215,0,0.25) 0%, transparent 70%)",
-  cherry: "radial-gradient(circle, rgba(239,68,68,0.2) 0%, transparent 70%)",
-  lemon: "radial-gradient(circle, rgba(250,204,21,0.2) 0%, transparent 70%)",
-  orange: "radial-gradient(circle, rgba(251,146,60,0.2) 0%, transparent 70%)",
-  grape: "radial-gradient(circle, rgba(139,92,246,0.25) 0%, transparent 70%)",
-  star: "radial-gradient(circle, rgba(255,215,0,0.35) 0%, transparent 70%)",
+/* Symbol visuals: SVG paths, display names, and accent colors */
+const SYMBOL_VISUALS: Record<string, { src: string; name: string; color: string }> = {
+  seven: { src: '/images/symbols/yoda.svg', name: 'Yoda', color: '#4ade80' },
+  diamond: { src: '/images/symbols/darth_vader.svg', name: 'Darth Vader', color: '#ef4444' },
+  bell: { src: '/images/symbols/death_star.svg', name: 'Death Star', color: '#94a3b8' },
+  cherry: { src: '/images/symbols/falcon.svg', name: 'Millennium Falcon', color: '#60a5fa' },
+  lemon: { src: '/images/symbols/stormtrooper.svg', name: 'Stormtrooper', color: '#f1f5f9' },
+  orange: { src: '/images/symbols/r2d2.svg', name: 'R2-D2', color: '#38bdf8' },
+  grape: { src: '/images/symbols/c3po.svg', name: 'C-3PO', color: '#fbbf24' },
+  star: { src: '/images/symbols/at_at.svg', name: 'AT-AT Wild', color: '#FFD700' },
 };
+
+/* Helper: get background gradient from symbol color */
+function getSymbolBg(symId: string): string {
+  const v = SYMBOL_VISUALS[symId];
+  if (!v) return 'transparent';
+  const opacity = symId === 'star' ? '35' : '20';
+  // Convert hex to rgba
+  const hex = v.color.replace('#', '');
+  const r = parseInt(hex.substring(0, 2), 16);
+  const g = parseInt(hex.substring(2, 4), 16);
+  const b = parseInt(hex.substring(4, 6), 16);
+  return `radial-gradient(circle, rgba(${r},${g},${b},0.${opacity}) 0%, transparent 70%)`;
+}
 
 /* helper: get symbol by id */
 function getSymbol(id: string) {
@@ -176,6 +189,7 @@ function ReelStrip({
           const landingRow = idx - (fullStrip.length - VISIBLE_ROWS);
           const isWin = isLanding && winningRows.has(landingRow);
 
+          const visual = SYMBOL_VISUALS[symId];
           return (
             <div
               key={`${reelIndex}-${idx}`}
@@ -185,26 +199,28 @@ function ReelStrip({
               )}
               style={{
                 height: SYMBOL_HEIGHT,
-                background: SYMBOL_BG[symId] ?? "transparent",
+                background: getSymbolBg(symId),
                 boxShadow: isWin
                   ? "inset 0 0 30px rgba(255,215,0,0.3), 0 0 20px rgba(255,215,0,0.4)"
                   : "inset 0 2px 4px rgba(0,0,0,0.3)",
               }}
             >
-              <span
+              <img
+                src={visual?.src ?? '/images/symbols/c3po.svg'}
+                alt={visual?.name ?? sym.name}
                 className={cn(
-                  "text-5xl drop-shadow-lg",
+                  "w-16 h-16 object-contain drop-shadow-lg",
                   symId === "star" && "animate-pulse",
                   spinning && "blur-[0.5px]"
                 )}
                 style={{
                   filter: isWin
                     ? "drop-shadow(0 0 12px rgba(255,215,0,0.8))"
+                    : symId === "star"
+                    ? "drop-shadow(0 0 8px rgba(255,215,0,0.6))"
                     : undefined,
                 }}
-              >
-                {sym.emoji}
-              </span>
+              />
             </div>
           );
         })}
@@ -514,14 +530,25 @@ export default function SlotsPage() {
   const canSpin = phase === "idle" && betAmount <= balance && !loading;
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] px-2 sm:px-4 py-4 relative overflow-hidden">
+    <div className="min-h-screen px-2 sm:px-4 py-4 relative overflow-hidden" style={{ background: '#0a0a0f' }}>
+      {/* HD Background image with dark overlay */}
+      <div
+        className="fixed inset-0 z-0"
+        style={{
+          backgroundImage: 'url(/images/backgrounds/bg.jpg)',
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          backgroundRepeat: 'no-repeat',
+        }}
+      />
+      <div className="fixed inset-0 z-0 bg-black/70" />
       {/* Background ambient glow */}
       <div className="fixed inset-0 pointer-events-none z-0">
         <div
           className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[600px] h-[600px] rounded-full opacity-10"
           style={{
             background:
-              "radial-gradient(circle, rgba(139,92,246,0.4) 0%, transparent 70%)",
+              "radial-gradient(circle, rgba(96,165,250,0.4) 0%, transparent 70%)",
           }}
         />
       </div>
@@ -657,7 +684,7 @@ export default function SlotsPage() {
             style={{
               background:
                 "linear-gradient(180deg, #1a1a25 0%, #0f0f18 100%)",
-              borderBottom: "2px solid rgba(255,215,0,0.2)",
+              borderBottom: "2px solid rgba(96,165,250,0.2)",
             }}
           >
             {/* Animated light dots */}
@@ -667,7 +694,7 @@ export default function SlotsPage() {
                   key={i}
                   className="absolute w-1.5 h-1.5 rounded-full"
                   style={{
-                    background: i % 2 === 0 ? "#FFD700" : "#FF6B6B",
+                    background: i % 2 === 0 ? "#60a5fa" : "#a78bfa",
                     left: `${(i / 20) * 100}%`,
                     top: i % 2 === 0 ? "8px" : "auto",
                     bottom: i % 2 === 0 ? "auto" : "8px",
@@ -689,16 +716,16 @@ export default function SlotsPage() {
               className="text-2xl md:text-4xl font-black tracking-wider relative z-10"
               style={{
                 background:
-                  "linear-gradient(to bottom, #FFD700, #FFA500, #FFD700)",
+                  "linear-gradient(to bottom, #60a5fa, #a78bfa, #60a5fa)",
                 WebkitBackgroundClip: "text",
                 WebkitTextFillColor: "transparent",
-                filter: "drop-shadow(0 0 20px rgba(255,215,0,0.4))",
-                textShadow: "0 0 40px rgba(255,215,0,0.3)",
+                filter: "drop-shadow(0 0 20px rgba(96,165,250,0.5))",
+                textShadow: "0 0 40px rgba(139,92,246,0.4)",
               }}
               animate={{ scale: [1, 1.01, 1] }}
               transition={{ repeat: Infinity, duration: 3 }}
             >
-              MEGA FORTUNE SLOTS
+              STAR WARS SLOTS
             </motion.h1>
           </div>
 
@@ -1227,11 +1254,17 @@ export default function SlotsPage() {
                   }}
                 >
                   <div className="flex gap-0.5">
-                    {entry.grid.map((reel, r) => (
-                      <span key={r} className="text-xs">
-                        {getSymbol(reel[1]).emoji}
-                      </span>
-                    ))}
+                    {entry.grid.map((reel, r) => {
+                      const vis = SYMBOL_VISUALS[reel[1]];
+                      return (
+                        <img
+                          key={r}
+                          src={vis?.src ?? '/images/symbols/c3po.svg'}
+                          alt={vis?.name ?? reel[1]}
+                          className="w-4 h-4 object-contain"
+                        />
+                      );
+                    })}
                   </div>
                   <span
                     className={cn(
@@ -1259,7 +1292,7 @@ export default function SlotsPage() {
       >
         <div className="space-y-1 max-h-[60vh] overflow-y-auto">
           <p className="text-xs text-gray-400 mb-3">
-            Match 3 symbols on any of 5 paylines (3 rows + 2 diagonals). Star
+            Match 3 symbols on any of 5 paylines (3 rows + 2 diagonals). AT-AT
             is wild and substitutes for any symbol.
           </p>
 
@@ -1308,41 +1341,51 @@ export default function SlotsPage() {
             <span className="text-center">3x Match</span>
             <span className="text-center">Type</span>
           </div>
-          {SYMBOLS.map((sym) => (
-            <div
-              key={sym.id}
-              className="grid grid-cols-4 gap-2 items-center py-2.5 border-b border-gray-800/50"
-            >
+          {SYMBOLS.map((sym) => {
+            const visual = SYMBOL_VISUALS[sym.id];
+            return (
               <div
-                className="w-10 h-10 flex items-center justify-center rounded-lg text-2xl"
-                style={{
-                  background: SYMBOL_BG[sym.id],
-                  boxShadow: "inset 0 2px 4px rgba(0,0,0,0.2)",
-                }}
+                key={sym.id}
+                className="grid grid-cols-4 gap-2 items-center py-2.5 border-b border-gray-800/50"
               >
-                {sym.emoji}
+                <div
+                  className="w-10 h-10 flex items-center justify-center rounded-lg"
+                  style={{
+                    background: getSymbolBg(sym.id),
+                    boxShadow: "inset 0 2px 4px rgba(0,0,0,0.2)",
+                  }}
+                >
+                  <img
+                    src={visual?.src ?? '/images/symbols/c3po.svg'}
+                    alt={visual?.name ?? sym.name}
+                    className="w-7 h-7 object-contain"
+                    style={sym.id === 'star' ? { filter: 'drop-shadow(0 0 6px rgba(255,215,0,0.6))' } : undefined}
+                  />
+                </div>
+                <span className="text-sm text-gray-300" style={{ color: visual?.color }}>
+                  {visual?.name ?? sym.name}
+                </span>
+                <span className="text-center text-[#FFD700] font-bold text-sm">
+                  {sym.multiplier > 0 ? `${sym.multiplier}x bet` : "---"}
+                </span>
+                <span className="text-center text-gray-500 text-xs">
+                  {sym.id === "star" ? (
+                    <span className="text-[#FFD700]">WILD</span>
+                  ) : sym.multiplier >= 25 ? (
+                    <span className="text-[#EF4444]">Premium</span>
+                  ) : sym.multiplier >= 10 ? (
+                    <span className="text-[#8B5CF6]">High</span>
+                  ) : (
+                    <span className="text-gray-500">Low</span>
+                  )}
+                </span>
               </div>
-              <span className="text-sm text-gray-300">{sym.name}</span>
-              <span className="text-center text-[#FFD700] font-bold text-sm">
-                {sym.multiplier > 0 ? `${sym.multiplier}x bet` : "---"}
-              </span>
-              <span className="text-center text-gray-500 text-xs">
-                {sym.id === "star" ? (
-                  <span className="text-[#FFD700]">WILD</span>
-                ) : sym.multiplier >= 25 ? (
-                  <span className="text-[#EF4444]">Premium</span>
-                ) : sym.multiplier >= 10 ? (
-                  <span className="text-[#8B5CF6]">High</span>
-                ) : (
-                  <span className="text-gray-500">Low</span>
-                )}
-              </span>
-            </div>
-          ))}
+            );
+          })}
           <div className="mt-4 pt-3 border-t border-gray-700 space-y-1">
             <p className="text-xs text-gray-400">
               <Sparkles className="w-3 h-3 inline mr-1 text-[#FFD700]" />
-              Star (Wild) substitutes for any symbol on a payline
+              AT-AT (Wild) substitutes for any symbol on a payline
             </p>
             <p className="text-xs text-gray-500">
               All wins are multiplied by your bet amount. Multiple paylines can
