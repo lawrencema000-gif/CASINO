@@ -1,344 +1,124 @@
-// ============================================================================
-// Slots Engine - Ported from html5-slot-machine + Slots.sol
-// ============================================================================
-
-import { SlotSymbol, SlotResult, SlotWinLine, ReelResult } from './types';
-import {
-  hashSeed,
-  generateServerSeed,
-  hashServerSeed,
-  seedToInt,
-  calculatePayout,
-} from './casino-math';
-import { createHash } from 'crypto';
+import type { SlotSymbol, SlotResult } from '@/lib/types'
 
 // ---------------------------------------------------------------------------
-// Symbol Weights (probability distribution per reel)
+// Symbols
 // ---------------------------------------------------------------------------
 
-export const SYMBOL_WEIGHTS: Record<SlotSymbol, number> = {
-  [SlotSymbol.CHERRY]: 20,
-  [SlotSymbol.LEMON]: 18,
-  [SlotSymbol.ORANGE]: 16,
-  [SlotSymbol.PLUM]: 14,
-  [SlotSymbol.BELL]: 10,
-  [SlotSymbol.BAR]: 7,
-  [SlotSymbol.SEVEN]: 4,
-  [SlotSymbol.WILD]: 2,
-  [SlotSymbol.SCATTER]: 5,
-};
+export const SYMBOLS: SlotSymbol[] = [
+  { id: 'seven', name: 'Seven', emoji: '7\uFE0F\u20E3', multiplier: 50, weight: 2 },
+  { id: 'diamond', name: 'Diamond', emoji: '\uD83D\uDC8E', multiplier: 25, weight: 3 },
+  { id: 'bell', name: 'Bell', emoji: '\uD83D\uDD14', multiplier: 15, weight: 5 },
+  { id: 'cherry', name: 'Cherry', emoji: '\uD83C\uDF52', multiplier: 10, weight: 8 },
+  { id: 'lemon', name: 'Lemon', emoji: '\uD83C\uDF4B', multiplier: 5, weight: 12 },
+  { id: 'orange', name: 'Orange', emoji: '\uD83C\uDF4A', multiplier: 3, weight: 15 },
+  { id: 'grape', name: 'Grape', emoji: '\uD83C\uDF47', multiplier: 2, weight: 20 },
+  { id: 'star', name: 'Star', emoji: '\u2B50', multiplier: 0, weight: 5 },
+]
 
-const TOTAL_WEIGHT = Object.values(SYMBOL_WEIGHTS).reduce((a, b) => a + b, 0);
-
-export const SYMBOL_NAMES: Record<SlotSymbol, string> = {
-  [SlotSymbol.CHERRY]: 'Cherry',
-  [SlotSymbol.LEMON]: 'Lemon',
-  [SlotSymbol.ORANGE]: 'Orange',
-  [SlotSymbol.PLUM]: 'Plum',
-  [SlotSymbol.BELL]: 'Bell',
-  [SlotSymbol.BAR]: 'Bar',
-  [SlotSymbol.SEVEN]: 'Seven',
-  [SlotSymbol.WILD]: 'Wild',
-  [SlotSymbol.SCATTER]: 'Scatter',
-};
+const TOTAL_WEIGHT = SYMBOLS.reduce((sum, s) => sum + s.weight, 0)
 
 // ---------------------------------------------------------------------------
-// Paytable - Multipliers for symbol combinations
-// Multiplier is applied per bet line
+// Paylines (indices into a 3x3 grid: row 0=top, 1=middle, 2=bottom)
+// Each payline is [[reel0Row, reel1Row, reel2Row]]
 // ---------------------------------------------------------------------------
 
-export interface PaytableEntry {
-  symbol: SlotSymbol;
-  count: number;
-  multiplier: number;
+export function getPaylines(): number[][] {
+  return [
+    [0, 0, 0], // top row
+    [1, 1, 1], // middle row
+    [2, 2, 2], // bottom row
+    [0, 1, 2], // diagonal top-left to bottom-right
+    [2, 1, 0], // diagonal bottom-left to top-right
+  ]
 }
 
-/**
- * Paytable: symbol, minimum count, payout multiplier.
- * Higher-value symbols have higher multipliers.
- */
-export const PAYTABLE: PaytableEntry[] = [
-  // 5 of a kind
-  { symbol: SlotSymbol.SEVEN, count: 5, multiplier: 1000 },
-  { symbol: SlotSymbol.BAR, count: 5, multiplier: 500 },
-  { symbol: SlotSymbol.BELL, count: 5, multiplier: 250 },
-  { symbol: SlotSymbol.PLUM, count: 5, multiplier: 100 },
-  { symbol: SlotSymbol.ORANGE, count: 5, multiplier: 75 },
-  { symbol: SlotSymbol.LEMON, count: 5, multiplier: 50 },
-  { symbol: SlotSymbol.CHERRY, count: 5, multiplier: 40 },
-  // 4 of a kind
-  { symbol: SlotSymbol.SEVEN, count: 4, multiplier: 250 },
-  { symbol: SlotSymbol.BAR, count: 4, multiplier: 100 },
-  { symbol: SlotSymbol.BELL, count: 4, multiplier: 50 },
-  { symbol: SlotSymbol.PLUM, count: 4, multiplier: 25 },
-  { symbol: SlotSymbol.ORANGE, count: 4, multiplier: 20 },
-  { symbol: SlotSymbol.LEMON, count: 4, multiplier: 15 },
-  { symbol: SlotSymbol.CHERRY, count: 4, multiplier: 10 },
-  // 3 of a kind
-  { symbol: SlotSymbol.SEVEN, count: 3, multiplier: 50 },
-  { symbol: SlotSymbol.BAR, count: 3, multiplier: 25 },
-  { symbol: SlotSymbol.BELL, count: 3, multiplier: 15 },
-  { symbol: SlotSymbol.PLUM, count: 3, multiplier: 8 },
-  { symbol: SlotSymbol.ORANGE, count: 3, multiplier: 6 },
-  { symbol: SlotSymbol.LEMON, count: 3, multiplier: 4 },
-  { symbol: SlotSymbol.CHERRY, count: 3, multiplier: 3 },
-];
-
 // ---------------------------------------------------------------------------
-// Paylines - 20 standard payline definitions for a 5x3 grid
-// Each payline is an array of row indices [col0Row, col1Row, col2Row, col3Row, col4Row]
+// Helpers
 // ---------------------------------------------------------------------------
 
-export const PAYLINES: number[][] = [
-  // Straight lines
-  [1, 1, 1, 1, 1], // 0: middle row
-  [0, 0, 0, 0, 0], // 1: top row
-  [2, 2, 2, 2, 2], // 2: bottom row
-  // V shapes
-  [0, 1, 2, 1, 0], // 3: V
-  [2, 1, 0, 1, 2], // 4: inverted V
-  // Zigzags
-  [0, 0, 1, 2, 2], // 5: descending slope
-  [2, 2, 1, 0, 0], // 6: ascending slope
-  [1, 0, 0, 0, 1], // 7: top dip
-  [1, 2, 2, 2, 1], // 8: bottom dip
-  [0, 1, 0, 1, 0], // 9: top zigzag
-  [2, 1, 2, 1, 2], // 10: bottom zigzag
-  // W and M shapes
-  [1, 0, 1, 0, 1], // 11: W top
-  [1, 2, 1, 2, 1], // 12: W bottom
-  [0, 0, 1, 0, 0], // 13: top with center dip
-  [2, 2, 1, 2, 2], // 14: bottom with center rise
-  // Steps
-  [0, 1, 2, 2, 2], // 15: descending steps
-  [2, 1, 0, 0, 0], // 16: ascending steps
-  [0, 0, 0, 1, 2], // 17: late descent
-  [2, 2, 2, 1, 0], // 18: late ascent
-  [1, 0, 2, 0, 1], // 19: cross pattern
-];
-
-// ---------------------------------------------------------------------------
-// Core Engine
-// ---------------------------------------------------------------------------
-
-/**
- * Pick a weighted random symbol using a deterministic hash value.
- */
-function pickSymbol(hashValue: number): SlotSymbol {
-  let roll = hashValue % TOTAL_WEIGHT;
-
-  for (let symbol = 0; symbol <= 8; symbol++) {
-    roll -= SYMBOL_WEIGHTS[symbol as SlotSymbol];
-    if (roll < 0) {
-      return symbol as SlotSymbol;
-    }
+function pickSymbol(rng: number): SlotSymbol {
+  let roll = Math.floor(rng * TOTAL_WEIGHT)
+  for (const sym of SYMBOLS) {
+    roll -= sym.weight
+    if (roll < 0) return sym
   }
-  return SlotSymbol.CHERRY; // fallback
+  return SYMBOLS[SYMBOLS.length - 1]
 }
 
 /**
- * Spin the reels deterministically using provably fair seeds.
+ * Simple seeded PRNG (splitmix-style) to derive multiple values from one float.
+ */
+function deriveRng(base: number, index: number): number {
+  // Use a simple hash-like mixing based on the base value and index
+  let x = Math.floor(base * 0x100000000) + index * 2654435761
+  x = ((x >>> 16) ^ x) * 0x45d9f3b
+  x = ((x >>> 16) ^ x) * 0x45d9f3b
+  x = (x >>> 16) ^ x
+  return (x >>> 0) / 0x100000000
+}
+
+// ---------------------------------------------------------------------------
+// Core spin function
+// ---------------------------------------------------------------------------
+
+/**
+ * Spin the slot machine.
  *
- * @param serverSeed - Server's secret seed
- * @param clientSeed - Client's public seed
- * @param nonce - Incrementing nonce
- * @param reelCount - Number of reels (columns), default 5
- * @param rowCount - Number of rows visible per reel, default 3
- * @returns 2D grid [reel][row] of SlotSymbol
+ * @param bet - The wager amount
+ * @param rngValue - A float 0-1 from the provably fair system
+ * @returns SlotResult with reels, payline wins, totalPayout, and jackpot flag
  */
-export function spinReels(
-  serverSeed: string,
-  clientSeed: string,
-  nonce: number,
-  reelCount: number = 5,
-  rowCount: number = 3
-): SlotSymbol[][] {
-  const grid: SlotSymbol[][] = [];
+export function spin(bet: number, rngValue: number): SlotResult {
+  // Generate a 3x3 grid (3 reels, 3 rows each)
+  const reels: string[][] = []
+  let rngIndex = 0
 
-  for (let reel = 0; reel < reelCount; reel++) {
-    const reelSymbols: SlotSymbol[] = [];
-    for (let row = 0; row < rowCount; row++) {
-      const hash = createHash('sha256')
-        .update(`${serverSeed}:${clientSeed}:${nonce}:${reel}:${row}`)
-        .digest('hex');
-      const hashInt = parseInt(hash.substring(0, 8), 16);
-      reelSymbols.push(pickSymbol(hashInt));
+  for (let reel = 0; reel < 3; reel++) {
+    const column: string[] = []
+    for (let row = 0; row < 3; row++) {
+      const r = deriveRng(rngValue, rngIndex++)
+      const symbol = pickSymbol(r)
+      column.push(symbol.id)
     }
-    grid.push(reelSymbols);
+    reels.push(column)
   }
 
-  return grid;
-}
+  // Check paylines
+  const paylines = getPaylines()
+  const paylineResults: { line: number; symbols: string[]; payout: number }[] = []
+  let totalPayout = 0
+  let isJackpot = false
 
-/**
- * Check a single payline for wins.
- * WILD substitutes for any non-SCATTER symbol.
- */
-function checkPayline(
-  grid: SlotSymbol[][],
-  payline: number[],
-  lineIndex: number
-): SlotWinLine | null {
-  const symbols: SlotSymbol[] = payline.map((row, col) => grid[col][row]);
+  for (let lineIdx = 0; lineIdx < paylines.length; lineIdx++) {
+    const line = paylines[lineIdx]
+    const lineSymbols = line.map((row, reel) => reels[reel][row])
 
-  // Find the first non-WILD symbol (the base symbol for this line)
-  let baseSymbol: SlotSymbol | null = null;
-  for (const sym of symbols) {
-    if (sym !== SlotSymbol.WILD && sym !== SlotSymbol.SCATTER) {
-      baseSymbol = sym;
-      break;
+    // Check for 3-of-a-kind (star/wild matches anything)
+    const nonWild = lineSymbols.filter((s) => s !== 'star')
+    const baseSymbol = nonWild.length > 0 ? nonWild[0] : 'seven' // all wilds = best symbol
+
+    const allMatch = lineSymbols.every(
+      (s) => s === baseSymbol || s === 'star'
+    )
+
+    if (allMatch) {
+      const sym = SYMBOLS.find((s) => s.id === baseSymbol)
+      if (sym && sym.multiplier > 0) {
+        const payout = bet * sym.multiplier
+        totalPayout += payout
+        paylineResults.push({ line: lineIdx, symbols: lineSymbols, payout })
+
+        if (baseSymbol === 'seven') {
+          isJackpot = true
+        }
+      }
     }
-  }
-
-  // All wilds counts as the highest-paying symbol (SEVEN)
-  if (baseSymbol === null) {
-    baseSymbol = SlotSymbol.SEVEN;
-  }
-
-  // Count consecutive matching symbols from left to right (WILD counts as match)
-  let matchCount = 0;
-  const matchPositions: number[] = [];
-
-  for (let col = 0; col < symbols.length; col++) {
-    const sym = symbols[col];
-    if (sym === baseSymbol || sym === SlotSymbol.WILD) {
-      matchCount++;
-      matchPositions.push(col);
-    } else {
-      break; // consecutive match broken
-    }
-  }
-
-  if (matchCount < 3) return null;
-
-  // Look up the paytable
-  const entry = PAYTABLE.find(
-    (e) => e.symbol === baseSymbol && e.count === matchCount
-  );
-  if (!entry) return null;
-
-  return {
-    lineIndex,
-    symbols,
-    positions: matchPositions,
-    multiplier: entry.multiplier,
-    payout: 0, // filled in by caller
-  };
-}
-
-/**
- * Check all paylines for wins on a grid.
- *
- * @param grid - 2D array [reel][row] of SlotSymbol
- * @param activeLines - Number of active paylines (1 to PAYLINES.length)
- * @returns Array of winning lines
- */
-export function checkWinLines(
-  grid: SlotSymbol[][],
-  activeLines: number = PAYLINES.length
-): SlotWinLine[] {
-  const wins: SlotWinLine[] = [];
-  const linesToCheck = Math.min(activeLines, PAYLINES.length);
-
-  for (let i = 0; i < linesToCheck; i++) {
-    const win = checkPayline(grid, PAYLINES[i], i);
-    if (win) {
-      wins.push(win);
-    }
-  }
-
-  return wins;
-}
-
-/**
- * Count scatter symbols anywhere on the grid.
- */
-export function countScatters(grid: SlotSymbol[][]): number {
-  let count = 0;
-  for (const reel of grid) {
-    for (const sym of reel) {
-      if (sym === SlotSymbol.SCATTER) count++;
-    }
-  }
-  return count;
-}
-
-/**
- * Determine free spins awarded based on scatter count.
- */
-export function getFreeSpins(scatterCount: number): number {
-  if (scatterCount >= 5) return 25;
-  if (scatterCount >= 4) return 15;
-  if (scatterCount >= 3) return 10;
-  return 0;
-}
-
-/**
- * Calculate total slot payout for a spin.
- *
- * @param grid - The symbol grid from spinReels()
- * @param betPerLine - Bet amount per active payline
- * @param activeLines - Number of active paylines
- * @param houseEdgeBps - House edge in basis points (default 300 = 3%)
- * @returns Full slot result with wins and payout
- */
-export function calculateSlotPayout(
-  grid: SlotSymbol[][],
-  betPerLine: number,
-  activeLines: number = PAYLINES.length,
-  houseEdgeBps: number = 300
-): SlotResult {
-  const winLines = checkWinLines(grid, activeLines);
-
-  // Apply bet per line to each win
-  let totalPayout = 0;
-  for (const win of winLines) {
-    win.payout = Math.floor(betPerLine * win.multiplier);
-    totalPayout += win.payout;
-  }
-
-  // Apply house edge to total payout
-  if (totalPayout > 0 && houseEdgeBps > 0) {
-    const edge = Math.floor((totalPayout * houseEdgeBps) / 10000);
-    totalPayout -= edge;
-  }
-
-  const scatterCount = countScatters(grid);
-  const freeSpinsAwarded = getFreeSpins(scatterCount);
-
-  // Scatter payout (anywhere on screen)
-  if (scatterCount >= 3) {
-    const scatterMultiplier = scatterCount >= 5 ? 50 : scatterCount >= 4 ? 20 : 5;
-    const scatterPayout = betPerLine * activeLines * scatterMultiplier;
-    totalPayout += scatterPayout;
   }
 
   return {
-    grid,
-    winLines,
-    totalPayout: Math.floor(totalPayout),
-    freeSpinsAwarded,
-    scatterCount,
-  };
-}
-
-/**
- * Full slot spin with provably fair seeds.
- */
-export function playSlotsRound(
-  serverSeed: string,
-  clientSeed: string,
-  nonce: number,
-  betPerLine: number,
-  activeLines: number = 20,
-  houseEdgeBps: number = 300
-): SlotResult & { seedHash: string; serverSeedHash: string } {
-  const grid = spinReels(serverSeed, clientSeed, nonce);
-  const result = calculateSlotPayout(grid, betPerLine, activeLines, houseEdgeBps);
-
-  return {
-    ...result,
-    seedHash: hashSeed(serverSeed, clientSeed, nonce),
-    serverSeedHash: hashServerSeed(serverSeed),
-  };
+    reels,
+    paylines: paylineResults,
+    totalPayout,
+    isJackpot,
+  }
 }

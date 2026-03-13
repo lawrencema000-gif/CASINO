@@ -1,346 +1,211 @@
-// ============================================================================
-// Blackjack Engine - Ported from Blackjack.sol
-// ============================================================================
-
-import { Card, GameType, BetResult } from './types';
-import { createDeck, drawCardsDeterministic, cardToString, visualize } from './poker';
-import {
-  generateServerSeed,
-  hashSeed,
-  hashServerSeed,
-  calculatePayout,
-  validateBet,
-} from './casino-math';
+import type { BlackjackCard, BlackjackHand } from '@/lib/types'
 
 // ---------------------------------------------------------------------------
-// Types
+// Deck
 // ---------------------------------------------------------------------------
 
-export enum BlackjackState {
-  BETTING = 0,
-  PLAYING = 1,
-  SETTLED = 2,
-}
+const SUITS: BlackjackCard['suit'][] = ['hearts', 'diamonds', 'clubs', 'spades']
+const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
 
-export enum BlackjackResult {
-  PENDING = 'pending',
-  PLAYER_BLACKJACK = 'blackjack',
-  PLAYER_WIN = 'win',
-  DEALER_WIN = 'lose',
-  PUSH = 'push',
-  PLAYER_BUST = 'bust',
+function cardValue(rank: string): number {
+  if (rank === 'A') return 11
+  if (['K', 'Q', 'J'].includes(rank)) return 10
+  return parseInt(rank, 10)
 }
-
-export interface BlackjackHand {
-  cards: Card[];
-  score: number;
-  isSoft: boolean;    // has an ace counting as 11
-  isBust: boolean;
-  isBlackjack: boolean;
-}
-
-export interface BlackjackGameData {
-  gameId: string;
-  betAmount: number;
-  playerHand: BlackjackHand;
-  dealerHand: BlackjackHand;
-  state: BlackjackState;
-  result: BlackjackResult;
-  payout: number;
-  serverSeedHash: string;
-  deck: Card[];
-  drawIndex: number;
-  serverSeed: string;
-  clientSeed: string;
-  nonce: number;
-}
-
-// ---------------------------------------------------------------------------
-// Score Calculation
-// ---------------------------------------------------------------------------
 
 /**
- * Calculate blackjack hand score, handling aces properly.
- * Card values: A=11(or 1), 2-10=face value, J/Q/K=10
+ * Create a shuffled deck of cards.
+ * Uses Fisher-Yates with a simple seeded RNG for reproducibility when needed.
  */
-export function calculateScore(cards: Card[]): BlackjackHand {
-  let score = 0;
-  let aces = 0;
-  const cardValues: number[] = [];
+export function createDeck(numDecks: number = 6): BlackjackCard[] {
+  const deck: BlackjackCard[] = []
+  for (let d = 0; d < numDecks; d++) {
+    for (const suit of SUITS) {
+      for (const rank of RANKS) {
+        deck.push({ suit, rank, value: cardValue(rank) })
+      }
+    }
+  }
+  // Fisher-Yates shuffle
+  for (let i = deck.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[deck[i], deck[j]] = [deck[j], deck[i]]
+  }
+  return deck
+}
+
+// ---------------------------------------------------------------------------
+// Hand evaluation
+// ---------------------------------------------------------------------------
+
+export function calculateHandValue(cards: BlackjackCard[]): BlackjackHand {
+  let value = 0
+  let aces = 0
 
   for (const card of cards) {
-    const value = card & 0x0f;
-    let cardScore: number;
-
-    if (value === 14) {
-      // Ace
-      aces++;
-      cardScore = 11;
-    } else if (value >= 11) {
-      // J, Q, K
-      cardScore = 10;
+    if (card.rank === 'A') {
+      aces++
+      value += 11
+    } else if (['K', 'Q', 'J'].includes(card.rank)) {
+      value += 10
     } else {
-      cardScore = value;
+      value += parseInt(card.rank, 10)
     }
-
-    score += cardScore;
-    cardValues.push(cardScore);
   }
 
-  // Reduce aces from 11 to 1 if bust
-  let softAces = aces;
-  while (score > 21 && softAces > 0) {
-    score -= 10;
-    softAces--;
+  let softAces = aces
+  while (value > 21 && softAces > 0) {
+    value -= 10
+    softAces--
   }
 
   return {
     cards: [...cards],
-    score,
+    value,
     isSoft: softAces > 0,
-    isBust: score > 21,
-    isBlackjack: cards.length === 2 && score === 21,
-  };
+    isBust: value > 21,
+    isBlackjack: cards.length === 2 && value === 21,
+  }
 }
 
 // ---------------------------------------------------------------------------
-// Blackjack Game Class
+// Deal
 // ---------------------------------------------------------------------------
 
-export class BlackjackGame {
-  private data: BlackjackGameData;
+export function dealInitial(deck: BlackjackCard[]): {
+  playerHand: BlackjackHand
+  dealerHand: BlackjackHand
+  deck: BlackjackCard[]
+} {
+  const remaining = [...deck]
+  const playerCards = [remaining.pop()!, remaining.pop()!]
+  const dealerCards = [remaining.pop()!, remaining.pop()!]
 
-  constructor(gameId: string) {
-    this.data = {
-      gameId,
-      betAmount: 0,
-      playerHand: { cards: [], score: 0, isSoft: false, isBust: false, isBlackjack: false },
-      dealerHand: { cards: [], score: 0, isSoft: false, isBust: false, isBlackjack: false },
-      state: BlackjackState.BETTING,
-      result: BlackjackResult.PENDING,
-      payout: 0,
-      serverSeedHash: '',
-      deck: [],
-      drawIndex: 0,
-      serverSeed: '',
-      clientSeed: '',
-      nonce: 0,
-    };
+  return {
+    playerHand: calculateHandValue(playerCards),
+    dealerHand: calculateHandValue(dealerCards),
+    deck: remaining,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Player actions
+// ---------------------------------------------------------------------------
+
+export function canSplit(hand: BlackjackHand): boolean {
+  if (hand.cards.length !== 2) return false
+  const v1 = hand.cards[0].rank === 'A' ? 11 : ((['K', 'Q', 'J'].includes(hand.cards[0].rank)) ? 10 : parseInt(hand.cards[0].rank, 10))
+  const v2 = hand.cards[1].rank === 'A' ? 11 : ((['K', 'Q', 'J'].includes(hand.cards[1].rank)) ? 10 : parseInt(hand.cards[1].rank, 10))
+  return v1 === v2
+}
+
+export function canDoubleDown(hand: BlackjackHand): boolean {
+  return hand.cards.length === 2 && !hand.isBust
+}
+
+export function hit(
+  hand: BlackjackHand,
+  deck: BlackjackCard[]
+): { hand: BlackjackHand; deck: BlackjackCard[] } {
+  const remaining = [...deck]
+  const card = remaining.pop()!
+  const newHand = calculateHandValue([...hand.cards, card])
+  return { hand: newHand, deck: remaining }
+}
+
+export function stand(): void {
+  // No-op; control passes to dealer or next hand
+}
+
+export function split(
+  hand: BlackjackHand,
+  deck: BlackjackCard[]
+): { hands: [BlackjackHand, BlackjackHand]; deck: BlackjackCard[] } {
+  if (!canSplit(hand)) throw new Error('Cannot split this hand')
+  const remaining = [...deck]
+  const card1 = remaining.pop()!
+  const card2 = remaining.pop()!
+  const hand1 = calculateHandValue([hand.cards[0], card1])
+  const hand2 = calculateHandValue([hand.cards[1], card2])
+  return { hands: [hand1, hand2], deck: remaining }
+}
+
+export function doubleDown(
+  hand: BlackjackHand,
+  deck: BlackjackCard[],
+  _bet: number
+): { hand: BlackjackHand; deck: BlackjackCard[] } {
+  if (!canDoubleDown(hand)) throw new Error('Cannot double down')
+  const remaining = [...deck]
+  const card = remaining.pop()!
+  const newHand = calculateHandValue([...hand.cards, card])
+  return { hand: newHand, deck: remaining }
+}
+
+// ---------------------------------------------------------------------------
+// Dealer logic
+// ---------------------------------------------------------------------------
+
+/**
+ * Dealer hits on soft 17 and below.
+ */
+export function playDealerHand(
+  hand: BlackjackHand,
+  deck: BlackjackCard[]
+): { hand: BlackjackHand; deck: BlackjackCard[] } {
+  let current = hand
+  let remaining = [...deck]
+
+  while (current.value < 17 || (current.value === 17 && current.isSoft)) {
+    const card = remaining.pop()!
+    current = calculateHandValue([...current.cards, card])
   }
 
-  /** Deal initial cards: 2 to player, 1 face-up to dealer */
-  deal(
-    betAmount: number,
-    clientSeed: string,
-    minBet: number = 1,
-    maxBet: number = 10000
-  ): BlackjackGameData {
-    validateBet(betAmount, minBet, maxBet);
+  return { hand: current, deck: remaining }
+}
 
-    const serverSeed = generateServerSeed();
-    const nonce = 1;
-    const seedHash = hashSeed(serverSeed, clientSeed, nonce);
+// ---------------------------------------------------------------------------
+// Settlement
+// ---------------------------------------------------------------------------
 
-    // Create and prepare deck
-    const deck = createDeck({ noJoker: true });
+export type HandOutcome = 'win' | 'lose' | 'push' | 'blackjack'
 
-    this.data.betAmount = betAmount;
-    this.data.serverSeed = serverSeed;
-    this.data.serverSeedHash = hashServerSeed(serverSeed);
-    this.data.clientSeed = clientSeed;
-    this.data.nonce = nonce;
-    this.data.deck = deck;
-    this.data.drawIndex = 0;
-    this.data.state = BlackjackState.PLAYING;
+/**
+ * Settle one or more player hands against the dealer hand.
+ * Blackjack pays 3:2.
+ */
+export function settleHands(
+  playerHands: BlackjackHand[],
+  dealerHand: BlackjackHand,
+  bets: number[]
+): { outcomes: HandOutcome[]; payouts: number[] } {
+  const outcomes: HandOutcome[] = []
+  const payouts: number[] = []
 
-    // Deal player cards
-    const playerCards = drawCardsDeterministic(deck, 2, hashSeed(seedHash, 'player', 0));
-    this.data.playerHand = calculateScore(playerCards);
+  for (let i = 0; i < playerHands.length; i++) {
+    const player = playerHands[i]
+    const bet = bets[i]
 
-    // Deal dealer card (1 face-up)
-    const dealerCards = drawCardsDeterministic(deck, 1, hashSeed(seedHash, 'dealer', 0));
-    this.data.dealerHand = calculateScore(dealerCards);
-    this.data.drawIndex = 3;
-
-    // Check for natural blackjack
-    if (this.data.playerHand.isBlackjack) {
-      // Deal dealer's second card to check for push
-      const dealerSecond = drawCardsDeterministic(
-        deck,
-        1,
-        hashSeed(seedHash, 'dealer', 1)
-      );
-      this.data.dealerHand = calculateScore([...dealerCards, ...dealerSecond]);
-      this.data.drawIndex = 4;
-
-      if (this.data.dealerHand.isBlackjack) {
-        // Push - both have blackjack
-        this.data.result = BlackjackResult.PUSH;
-        this.data.payout = betAmount;
-      } else {
-        // Player blackjack wins 3:2
-        this.data.result = BlackjackResult.PLAYER_BLACKJACK;
-        this.data.payout = betAmount + Math.floor((betAmount * 3) / 2);
-      }
-      this.data.state = BlackjackState.SETTLED;
-    }
-
-    return this._getPublicState();
-  }
-
-  /** Player hits - draw one card */
-  hit(): BlackjackGameData {
-    if (this.data.state !== BlackjackState.PLAYING) {
-      throw new Error('Game is not in playing state');
-    }
-
-    const seedHash = hashSeed(
-      this.data.serverSeed,
-      this.data.clientSeed,
-      this.data.nonce
-    );
-    const newCard = drawCardsDeterministic(
-      this.data.deck,
-      1,
-      hashSeed(seedHash, 'hit', this.data.drawIndex)
-    );
-    this.data.drawIndex++;
-
-    const allCards = [...this.data.playerHand.cards, ...newCard];
-    this.data.playerHand = calculateScore(allCards);
-
-    // Check bust
-    if (this.data.playerHand.isBust) {
-      this.data.result = BlackjackResult.PLAYER_BUST;
-      this.data.payout = 0;
-      this.data.state = BlackjackState.SETTLED;
-    }
-
-    return this._getPublicState();
-  }
-
-  /** Player stands - dealer plays out */
-  stand(): BlackjackGameData {
-    if (this.data.state !== BlackjackState.PLAYING) {
-      throw new Error('Game is not in playing state');
-    }
-
-    const seedHash = hashSeed(
-      this.data.serverSeed,
-      this.data.clientSeed,
-      this.data.nonce
-    );
-
-    // Deal dealer's remaining cards until 17+
-    let dealerCards = [...this.data.dealerHand.cards];
-
-    // If dealer only has 1 card, deal the second
-    if (dealerCards.length === 1) {
-      const secondCard = drawCardsDeterministic(
-        this.data.deck,
-        1,
-        hashSeed(seedHash, 'dealer-stand', this.data.drawIndex)
-      );
-      dealerCards.push(...secondCard);
-      this.data.drawIndex++;
-    }
-
-    let dealerHand = calculateScore(dealerCards);
-
-    // Dealer hits on soft 17 and below
-    while (dealerHand.score < 17) {
-      const newCard = drawCardsDeterministic(
-        this.data.deck,
-        1,
-        hashSeed(seedHash, 'dealer-hit', this.data.drawIndex)
-      );
-      dealerCards.push(...newCard);
-      this.data.drawIndex++;
-      dealerHand = calculateScore(dealerCards);
-    }
-
-    this.data.dealerHand = dealerHand;
-    this.data.state = BlackjackState.SETTLED;
-
-    // Determine result
-    const playerScore = this.data.playerHand.score;
-    const dealerScore = this.data.dealerHand.score;
-
-    if (dealerHand.isBust || playerScore > dealerScore) {
-      this.data.result = BlackjackResult.PLAYER_WIN;
-      this.data.payout = this.data.betAmount * 2; // 1:1 + original bet
-    } else if (playerScore === dealerScore) {
-      this.data.result = BlackjackResult.PUSH;
-      this.data.payout = this.data.betAmount; // return bet
+    if (player.isBust) {
+      outcomes.push('lose')
+      payouts.push(0)
+    } else if (player.isBlackjack && !dealerHand.isBlackjack) {
+      outcomes.push('blackjack')
+      payouts.push(bet + Math.floor(bet * 1.5)) // 3:2
+    } else if (dealerHand.isBust) {
+      outcomes.push('win')
+      payouts.push(bet * 2)
+    } else if (player.value > dealerHand.value) {
+      outcomes.push('win')
+      payouts.push(bet * 2)
+    } else if (player.value === dealerHand.value) {
+      outcomes.push('push')
+      payouts.push(bet)
     } else {
-      this.data.result = BlackjackResult.DEALER_WIN;
-      this.data.payout = 0;
+      outcomes.push('lose')
+      payouts.push(0)
     }
-
-    return this._getPublicState();
   }
 
-  /** Double down - double bet, take exactly one more card, then stand */
-  doubleDown(): BlackjackGameData {
-    if (this.data.state !== BlackjackState.PLAYING) {
-      throw new Error('Game is not in playing state');
-    }
-    if (this.data.playerHand.cards.length !== 2) {
-      throw new Error('Can only double down on initial hand');
-    }
-
-    this.data.betAmount *= 2;
-
-    // Draw exactly one card
-    const seedHash = hashSeed(
-      this.data.serverSeed,
-      this.data.clientSeed,
-      this.data.nonce
-    );
-    const newCard = drawCardsDeterministic(
-      this.data.deck,
-      1,
-      hashSeed(seedHash, 'double', this.data.drawIndex)
-    );
-    this.data.drawIndex++;
-
-    const allCards = [...this.data.playerHand.cards, ...newCard];
-    this.data.playerHand = calculateScore(allCards);
-
-    if (this.data.playerHand.isBust) {
-      this.data.result = BlackjackResult.PLAYER_BUST;
-      this.data.payout = 0;
-      this.data.state = BlackjackState.SETTLED;
-      return this._getPublicState();
-    }
-
-    // Auto-stand after double
-    return this.stand();
-  }
-
-  /** Get the current game result */
-  getResult(): BlackjackResult {
-    return this.data.result;
-  }
-
-  /** Get full game data (for server use) */
-  getFullState(): BlackjackGameData {
-    return { ...this.data };
-  }
-
-  /** Get state safe for client (hides server seed until game ends) */
-  private _getPublicState(): BlackjackGameData {
-    return {
-      ...this.data,
-      serverSeed:
-        this.data.state === BlackjackState.SETTLED
-          ? this.data.serverSeed
-          : '', // hidden until game ends
-      deck: [], // never expose the deck
-    };
-  }
-
-  /** Static helper to get card display strings */
-  static cardToString = cardToString;
-  static visualize = visualize;
+  return { outcomes, payouts }
 }

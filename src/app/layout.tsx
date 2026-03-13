@@ -11,10 +11,10 @@ const inter = Inter({
 })
 
 export const metadata: Metadata = {
-  title: 'Royal Casino - Online Gaming Platform',
+  title: 'FORTUNA CASINO - Where Fortune Favors the Bold',
   description:
-    'Experience the thrill of Royal Casino. Play Slots, Blackjack, Roulette, Poker and more. Premium online gaming with provably fair games.',
-  keywords: ['casino', 'online gaming', 'slots', 'blackjack', 'roulette', 'poker'],
+    'Experience the ultimate online casino. Play Slots, Blackjack, Roulette, Poker, Crash, Plinko and more. Provably fair games with instant payouts.',
+  keywords: ['casino', 'online gaming', 'slots', 'blackjack', 'roulette', 'poker', 'crash', 'plinko', 'fortuna'],
 }
 
 export default function RootLayout({

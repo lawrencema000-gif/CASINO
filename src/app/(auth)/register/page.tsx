@@ -1,66 +1,85 @@
-"use client";
+'use client'
 
-import { useState, FormEvent } from "react";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
+import { useState, useMemo, FormEvent } from 'react'
+import { useRouter } from 'next/navigation'
+import Link from 'next/link'
+import { motion } from 'framer-motion'
+import { Crown, User, Mail, Lock, ShieldCheck, Loader2, CheckCircle2 } from 'lucide-react'
+import { createClient } from '@/lib/supabase/client'
+
+function getPasswordStrength(password: string): { score: number; label: string; color: string } {
+  let score = 0
+  if (password.length >= 8) score++
+  if (password.length >= 12) score++
+  if (/[A-Z]/.test(password)) score++
+  if (/[0-9]/.test(password)) score++
+  if (/[^A-Za-z0-9]/.test(password)) score++
+
+  if (score <= 1) return { score, label: 'Weak', color: 'bg-[#EF4444]' }
+  if (score <= 2) return { score, label: 'Fair', color: 'bg-orange-500' }
+  if (score <= 3) return { score, label: 'Good', color: 'bg-[#FFD700]' }
+  if (score <= 4) return { score, label: 'Strong', color: 'bg-[#00FF88]' }
+  return { score, label: 'Excellent', color: 'bg-[#00FF88]' }
+}
 
 export default function RegisterPage() {
-  const [username, setUsername] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [agreeTerms, setAgreeTerms] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [username, setUsername] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [agreeTerms, setAgreeTerms] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [success, setSuccess] = useState(false)
 
-  const router = useRouter();
+  const router = useRouter()
+  const passwordStrength = useMemo(() => getPasswordStrength(password), [password])
 
   const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    setError(null);
+    e.preventDefault()
+    setError(null)
 
     // Validations
     if (username.length < 3 || username.length > 20) {
-      setError("Username must be between 3 and 20 characters.");
-      return;
+      setError('Username must be between 3 and 20 characters.')
+      return
     }
 
     if (!/^[a-zA-Z0-9_]+$/.test(username)) {
-      setError("Username can only contain letters, numbers, and underscores.");
-      return;
+      setError('Username can only contain letters, numbers, and underscores.')
+      return
     }
 
     if (password.length < 8) {
-      setError("Password must be at least 8 characters.");
-      return;
+      setError('Password must be at least 8 characters.')
+      return
     }
 
     if (password !== confirmPassword) {
-      setError("Passwords do not match.");
-      return;
+      setError('Passwords do not match.')
+      return
     }
 
     if (!agreeTerms) {
-      setError("You must agree to the Terms of Service.");
-      return;
+      setError('You must confirm you are 18+ and agree to the Terms.')
+      return
     }
 
-    setLoading(true);
+    setLoading(true)
 
-    const supabase = createClient();
+    const supabase = createClient()
 
     // Check if username is taken
     const { data: existingUser } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("username", username)
-      .single();
+      .from('profiles')
+      .select('id')
+      .eq('username', username)
+      .single()
 
     if (existingUser) {
-      setError("Username is already taken.");
-      setLoading(false);
-      return;
+      setError('Username is already taken.')
+      setLoading(false)
+      return
     }
 
     // Create auth account
@@ -70,17 +89,17 @@ export default function RegisterPage() {
       options: {
         data: { username },
       },
-    });
+    })
 
     if (signUpError) {
-      setError(signUpError.message);
-      setLoading(false);
-      return;
+      setError(signUpError.message)
+      setLoading(false)
+      return
     }
 
     if (data.user) {
       // Create profile with 10,000 starting credits
-      const { error: profileError } = await supabase.from("profiles").insert({
+      const { error: profileError } = await supabase.from('profiles').insert({
         id: data.user.id,
         username,
         balance: 10000,
@@ -88,55 +107,111 @@ export default function RegisterPage() {
         total_won: 0,
         level: 1,
         exp: 0,
-        vip_tier: "bronze",
-      });
+        vip_tier: 'bronze',
+      })
 
       if (profileError) {
-        setError(
-          "Account created but profile setup failed. Please contact support."
-        );
-        setLoading(false);
-        return;
+        setError('Account created but profile setup failed. Please contact support.')
+        setLoading(false)
+        return
       }
 
       // Record the signup bonus transaction
-      await supabase.from("transactions").insert({
+      await supabase.from('transactions').insert({
         player_id: data.user.id,
-        type: "bonus",
+        type: 'bonus',
         amount: 10000,
         balance_after: 10000,
-        description: "Welcome bonus - 10,000 free credits",
-      });
-    }
+        description: 'Welcome bonus - 10,000 free credits',
+      })
 
-    router.push("/");
-    router.refresh();
-  };
+      // Check if email confirmation is required
+      if (data.session) {
+        // Auto-confirmed, redirect
+        router.push('/')
+        router.refresh()
+      } else {
+        // Email confirmation required
+        setSuccess(true)
+        setLoading(false)
+      }
+    }
+  }
+
+  // Success state - email verification required
+  if (success) {
+    return (
+      <div className="text-center">
+        <motion.div
+          initial={{ scale: 0 }}
+          animate={{ scale: 1 }}
+          transition={{ type: 'spring', damping: 15 }}
+          className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-[#00FF88]/10"
+        >
+          <CheckCircle2 className="h-8 w-8 text-[#00FF88]" />
+        </motion.div>
+        <h2 className="mb-2 text-xl font-bold text-white">Check Your Email</h2>
+        <p className="mb-4 text-sm text-zinc-400">
+          We&apos;ve sent a confirmation link to <span className="text-[#FFD700]">{email}</span>.
+          Please verify your email to get started.
+        </p>
+        <p className="text-xs text-zinc-600">
+          Didn&apos;t receive it? Check your spam folder or{' '}
+          <button
+            onClick={() => setSuccess(false)}
+            className="text-[#FFD700] hover:text-[#e6c84a] transition-colors"
+          >
+            try again
+          </button>
+        </p>
+      </div>
+    )
+  }
 
   return (
-    <>
-      <h2 className="mb-6 text-center text-2xl font-semibold text-white">
+    <div className="w-full">
+      {/* Branding */}
+      <div className="mb-6 text-center">
+        <motion.div
+          initial={{ scale: 0, rotate: -180 }}
+          animate={{ scale: 1, rotate: 0 }}
+          transition={{ type: 'spring', damping: 15, stiffness: 200 }}
+          className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-[#FFD700] to-[#c9a227] shadow-[0_0_30px_rgba(255,215,0,0.3)]"
+        >
+          <Crown className="h-7 w-7 text-black" />
+        </motion.div>
+        <h1 className="text-2xl font-black tracking-wider">
+          <span className="bg-gradient-to-r from-[#FFD700] via-[#e6c84a] to-[#FFD700] bg-clip-text text-transparent">
+            FORTUNA CASINO
+          </span>
+        </h1>
+      </div>
+
+      <h2 className="mb-4 text-center text-xl font-semibold text-white">
         Create Account
       </h2>
 
-      <div className="mb-5 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-center text-sm text-amber-400">
-        Get <span className="font-bold">10,000 free credits</span> when you
-        sign up!
+      {/* Bonus Banner */}
+      <div className="mb-5 rounded-lg border border-[#FFD700]/20 bg-[#FFD700]/5 px-4 py-3 text-center text-sm text-[#FFD700]">
+        Get <span className="font-bold">10,000 free credits</span> when you sign up!
       </div>
 
+      {/* Error */}
       {error && (
-        <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-4 rounded-lg border border-[#EF4444]/30 bg-[#EF4444]/10 px-4 py-3 text-sm text-[#EF4444]"
+        >
           {error}
-        </div>
+        </motion.div>
       )}
 
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* Username */}
         <div>
-          <label
-            htmlFor="username"
-            className="mb-1.5 block text-sm font-medium text-zinc-400"
-          >
+          <label htmlFor="username" className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-zinc-400">
+            <User className="h-3.5 w-3.5" />
             Username
           </label>
           <input
@@ -148,16 +223,14 @@ export default function RegisterPage() {
             placeholder="Choose a username"
             minLength={3}
             maxLength={20}
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2.5 text-white placeholder-zinc-500 outline-none transition-colors focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/25"
+            className="w-full rounded-lg border border-[#333] bg-[#111118] px-4 py-2.5 text-white placeholder-zinc-500 outline-none transition-colors focus:border-[#FFD700] focus:ring-1 focus:ring-[#FFD700]/25"
           />
         </div>
 
         {/* Email */}
         <div>
-          <label
-            htmlFor="email"
-            className="mb-1.5 block text-sm font-medium text-zinc-400"
-          >
+          <label htmlFor="email" className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-zinc-400">
+            <Mail className="h-3.5 w-3.5" />
             Email
           </label>
           <input
@@ -167,16 +240,14 @@ export default function RegisterPage() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2.5 text-white placeholder-zinc-500 outline-none transition-colors focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/25"
+            className="w-full rounded-lg border border-[#333] bg-[#111118] px-4 py-2.5 text-white placeholder-zinc-500 outline-none transition-colors focus:border-[#FFD700] focus:ring-1 focus:ring-[#FFD700]/25"
           />
         </div>
 
         {/* Password */}
         <div>
-          <label
-            htmlFor="password"
-            className="mb-1.5 block text-sm font-medium text-zinc-400"
-          >
+          <label htmlFor="password" className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-zinc-400">
+            <Lock className="h-3.5 w-3.5" />
             Password
           </label>
           <input
@@ -187,16 +258,37 @@ export default function RegisterPage() {
             onChange={(e) => setPassword(e.target.value)}
             placeholder="Min. 8 characters"
             minLength={8}
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2.5 text-white placeholder-zinc-500 outline-none transition-colors focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/25"
+            className="w-full rounded-lg border border-[#333] bg-[#111118] px-4 py-2.5 text-white placeholder-zinc-500 outline-none transition-colors focus:border-[#FFD700] focus:ring-1 focus:ring-[#FFD700]/25"
           />
+          {/* Password Strength Indicator */}
+          {password.length > 0 && (
+            <div className="mt-2">
+              <div className="flex gap-1">
+                {[1, 2, 3, 4, 5].map((level) => (
+                  <div
+                    key={level}
+                    className={`h-1.5 flex-1 rounded-full transition-colors ${
+                      level <= passwordStrength.score ? passwordStrength.color : 'bg-zinc-800'
+                    }`}
+                  />
+                ))}
+              </div>
+              <p className={`mt-1 text-xs ${
+                passwordStrength.score <= 1 ? 'text-[#EF4444]' :
+                passwordStrength.score <= 2 ? 'text-orange-500' :
+                passwordStrength.score <= 3 ? 'text-[#FFD700]' :
+                'text-[#00FF88]'
+              }`}>
+                {passwordStrength.label}
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Confirm Password */}
         <div>
-          <label
-            htmlFor="confirmPassword"
-            className="mb-1.5 block text-sm font-medium text-zinc-400"
-          >
+          <label htmlFor="confirmPassword" className="mb-1.5 flex items-center gap-1.5 text-sm font-medium text-zinc-400">
+            <ShieldCheck className="h-3.5 w-3.5" />
             Confirm Password
           </label>
           <input
@@ -206,8 +298,15 @@ export default function RegisterPage() {
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
             placeholder="Re-enter your password"
-            className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2.5 text-white placeholder-zinc-500 outline-none transition-colors focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/25"
+            className={`w-full rounded-lg border bg-[#111118] px-4 py-2.5 text-white placeholder-zinc-500 outline-none transition-colors focus:ring-1 ${
+              confirmPassword && confirmPassword !== password
+                ? 'border-[#EF4444] focus:border-[#EF4444] focus:ring-[#EF4444]/25'
+                : 'border-[#333] focus:border-[#FFD700] focus:ring-[#FFD700]/25'
+            }`}
           />
+          {confirmPassword && confirmPassword !== password && (
+            <p className="mt-1 text-xs text-[#EF4444]">Passwords do not match</p>
+          )}
         </div>
 
         {/* Terms */}
@@ -216,15 +315,15 @@ export default function RegisterPage() {
             type="checkbox"
             checked={agreeTerms}
             onChange={(e) => setAgreeTerms(e.target.checked)}
-            className="mt-0.5 h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-amber-500 focus:ring-amber-500/25"
+            className="mt-0.5 h-4 w-4 rounded border-zinc-600 bg-[#111118] text-[#FFD700] accent-[#FFD700] focus:ring-[#FFD700]/25"
           />
           <span>
-            I agree to the{" "}
-            <span className="text-amber-400 hover:text-amber-300 cursor-pointer">
+            I confirm I am <span className="text-white font-medium">18+</span> and agree to the{' '}
+            <span className="text-[#FFD700] hover:text-[#e6c84a] cursor-pointer">
               Terms of Service
-            </span>{" "}
-            and{" "}
-            <span className="text-amber-400 hover:text-amber-300 cursor-pointer">
+            </span>{' '}
+            and{' '}
+            <span className="text-[#FFD700] hover:text-[#e6c84a] cursor-pointer">
               Privacy Policy
             </span>
           </span>
@@ -234,47 +333,29 @@ export default function RegisterPage() {
         <button
           type="submit"
           disabled={loading || !agreeTerms}
-          className="w-full rounded-lg bg-gradient-to-r from-amber-500 to-yellow-500 px-4 py-2.5 font-semibold text-black transition-all hover:from-amber-400 hover:to-yellow-400 disabled:cursor-not-allowed disabled:opacity-50"
+          className="w-full rounded-lg bg-gradient-to-r from-[#c9a227] via-[#FFD700] to-[#e6c84a] px-4 py-2.5 font-bold text-black transition-all hover:shadow-[0_0_25px_rgba(255,215,0,0.3)] disabled:cursor-not-allowed disabled:opacity-50"
         >
           {loading ? (
             <span className="flex items-center justify-center gap-2">
-              <svg
-                className="h-4 w-4 animate-spin"
-                viewBox="0 0 24 24"
-                fill="none"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                />
-              </svg>
+              <Loader2 className="h-4 w-4 animate-spin" />
               Creating account...
             </span>
           ) : (
-            "Create Account"
+            'Create Account'
           )}
         </button>
       </form>
 
       {/* Login link */}
       <p className="mt-6 text-center text-sm text-zinc-500">
-        Already have an account?{" "}
+        Already have an account?{' '}
         <Link
           href="/login"
-          className="font-medium text-amber-400 hover:text-amber-300 transition-colors"
+          className="font-medium text-[#FFD700] transition-colors hover:text-[#e6c84a]"
         >
-          Sign in
+          Sign In
         </Link>
       </p>
-    </>
-  );
+    </div>
+  )
 }

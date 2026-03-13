@@ -4,28 +4,17 @@ export default function AuthLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-zinc-950 via-zinc-900 to-zinc-950 px-4">
-      {/* Ambient glow effects */}
+    <div className="flex min-h-screen items-center justify-center bg-[#0a0a0f] px-4">
+      {/* Animated background pattern */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
-        <div className="absolute -left-40 -top-40 h-80 w-80 rounded-full bg-amber-500/5 blur-3xl" />
-        <div className="absolute -bottom-40 -right-40 h-80 w-80 rounded-full bg-purple-500/5 blur-3xl" />
+        <div className="absolute -left-40 -top-40 h-96 w-96 rounded-full bg-[#FFD700]/5 blur-[100px] animate-pulse" />
+        <div className="absolute -bottom-40 -right-40 h-96 w-96 rounded-full bg-[#8B5CF6]/5 blur-[100px] animate-pulse" style={{ animationDelay: '1s' }} />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-64 w-64 rounded-full bg-[#00FF88]/3 blur-[80px] animate-pulse" style={{ animationDelay: '2s' }} />
       </div>
 
       <div className="relative w-full max-w-md">
-        {/* Casino branding */}
-        <div className="mb-8 text-center">
-          <h1 className="text-4xl font-bold tracking-tight text-white">
-            <span className="bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 bg-clip-text text-transparent">
-              CASINO
-            </span>
-          </h1>
-          <p className="mt-2 text-sm text-zinc-500">
-            Provably fair gaming platform
-          </p>
-        </div>
-
         {/* Card container */}
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-8 shadow-2xl shadow-black/50 backdrop-blur-sm">
+        <div className="rounded-2xl border border-[#1a1a25] bg-[#1a1a25]/80 p-8 shadow-2xl shadow-black/50 backdrop-blur-sm">
           {children}
         </div>
 

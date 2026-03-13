@@ -21,12 +21,16 @@ export default function BalanceDisplay({
 }: BalanceDisplayProps) {
   const [displayBalance, setDisplayBalance] = useState(balance)
   const [isAnimating, setIsAnimating] = useState(false)
+  const [direction, setDirection] = useState<'up' | 'down' | null>(null)
   const prevBalance = useRef(balance)
 
   useEffect(() => {
     if (balance === prevBalance.current) return
 
+    const isUp = balance > prevBalance.current
+    setDirection(isUp ? 'up' : 'down')
     setIsAnimating(true)
+
     const diff = balance - prevBalance.current
     const steps = 20
     const stepValue = diff / steps
@@ -39,7 +43,10 @@ export default function BalanceDisplay({
       if (step >= steps) {
         current = balance
         clearInterval(interval)
-        setTimeout(() => setIsAnimating(false), 300)
+        setTimeout(() => {
+          setIsAnimating(false)
+          setDirection(null)
+        }, 400)
       }
       setDisplayBalance(current)
     }, 30)
@@ -57,23 +64,27 @@ export default function BalanceDisplay({
   return (
     <div
       className={cn(
-        'inline-flex items-center gap-2 rounded-xl bg-[var(--casino-surface)] border border-[var(--casino-border)]',
+        'inline-flex items-center gap-2 rounded-xl bg-[var(--bg-secondary)] border border-[var(--border-color)] transition-all duration-300',
         size === 'sm' ? 'px-2.5 py-1.5' : 'px-4 py-2',
-        isAnimating && 'win-pulse',
+        isAnimating && direction === 'up' && 'border-[var(--neon-green)]/40 shadow-[0_0_15px_rgba(0,255,136,0.15)]',
+        isAnimating && direction === 'down' && 'border-[var(--casino-red)]/40 shadow-[0_0_15px_rgba(239,68,68,0.15)]',
         className
       )}
     >
       <Coins
         className={cn(
-          'text-[var(--casino-accent)]',
+          'text-[var(--gold)]',
           size === 'sm' ? 'w-4 h-4' : 'w-5 h-5',
           isAnimating && 'coin-bounce'
         )}
       />
       <span
         className={cn(
-          'font-bold text-[var(--casino-accent)] tabular-nums',
-          size === 'sm' ? 'text-sm' : 'text-base'
+          'font-bold tabular-nums transition-colors duration-300',
+          size === 'sm' ? 'text-sm' : 'text-base',
+          !isAnimating && 'text-[var(--gold)]',
+          isAnimating && direction === 'up' && 'text-[var(--neon-green)]',
+          isAnimating && direction === 'down' && 'text-[var(--casino-red)]'
         )}
       >
         ${formatted}
@@ -81,7 +92,7 @@ export default function BalanceDisplay({
       {showAddFunds && (
         <button
           onClick={onAddFunds}
-          className="ml-1 p-1 rounded-lg bg-[var(--casino-accent)]/20 text-[var(--casino-accent)] hover:bg-[var(--casino-accent)]/30 transition-colors cursor-pointer"
+          className="ml-1 p-1 rounded-lg bg-[var(--gold)]/20 text-[var(--gold)] hover:bg-[var(--gold)]/30 transition-colors cursor-pointer"
         >
           <Plus className="w-3.5 h-3.5" />
         </button>

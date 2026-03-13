@@ -34,7 +34,7 @@ export default function Footer() {
           <div className="flex items-center gap-2.5">
             <Crown className="w-6 h-6 text-[var(--casino-accent)]" />
             <span className="text-lg font-extrabold text-gold-gradient">
-              ROYAL CASINO
+              FORTUNA CASINO
             </span>
           </div>
 
@@ -82,7 +82,7 @@ export default function Footer() {
 
           {/* Copyright */}
           <p className="text-xs text-[var(--casino-text-muted)]">
-            &copy; {new Date().getFullYear()} Royal Casino. All rights reserved.
+            &copy; {new Date().getFullYear()} Fortuna Casino. All rights reserved.
           </p>
         </div>
       </div>

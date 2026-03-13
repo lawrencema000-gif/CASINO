@@ -1,11 +1,11 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import {
   User, Mail, Shield, Gamepad2, Trophy, TrendingUp, Star,
   Settings, Lock, Clock, Edit2, Camera, ArrowLeft, Crown,
-  Zap, Target, ChevronRight
+  Zap, Target, ChevronRight, Check, X, Calendar, Loader2
 } from 'lucide-react'
 import Button from '@/components/ui/Button'
 import Card from '@/components/ui/Card'
@@ -14,14 +14,16 @@ import { cn } from '@/components/ui/cn'
 import { useAuth } from '@/hooks/useAuth'
 import { useBalance } from '@/hooks/useBalance'
 import { useRouter } from 'next/navigation'
+import { createClient } from '@/lib/supabase/client'
 
-interface RecentGame {
+interface GameRecord {
   id: string
-  game: string
-  bet: number
+  game_type: string
+  bet_amount: number
   payout: number
-  result: 'win' | 'loss' | 'push'
-  time: string
+  multiplier: number
+  settled: boolean
+  created_at: string
 }
 
 const VIP_TIERS = [
@@ -32,49 +34,64 @@ const VIP_TIERS = [
   { name: 'Diamond', min: 500000, max: 1000000, color: 'from-[#b9f2ff] to-[#00bcd4]', icon: Star },
 ]
 
-const MOCK_RECENT_GAMES: RecentGame[] = [
-  { id: '1', game: 'Blackjack', bet: 500, payout: 1000, result: 'win', time: '5m ago' },
-  { id: '2', game: 'Slots', bet: 100, payout: 0, result: 'loss', time: '12m ago' },
-  { id: '3', game: 'Roulette', bet: 200, payout: 400, result: 'win', time: '18m ago' },
-  { id: '4', game: 'Plinko', bet: 1000, payout: 5200, result: 'win', time: '25m ago' },
-  { id: '5', game: 'Poker', bet: 500, payout: 0, result: 'loss', time: '30m ago' },
-  { id: '6', game: 'Dice', bet: 100, payout: 196, result: 'win', time: '35m ago' },
-  { id: '7', game: 'Crash', bet: 250, payout: 0, result: 'loss', time: '40m ago' },
-  { id: '8', game: 'Blackjack', bet: 1000, payout: 1000, result: 'push', time: '45m ago' },
-  { id: '9', game: 'Slots', bet: 50, payout: 2500, result: 'win', time: '1h ago' },
-  { id: '10', game: 'Lottery', bet: 100, payout: 0, result: 'loss', time: '1h ago' },
-  { id: '11', game: 'Roulette', bet: 500, payout: 1750, result: 'win', time: '2h ago' },
-  { id: '12', game: 'Poker', bet: 200, payout: 600, result: 'win', time: '2h ago' },
-  { id: '13', game: 'Coinflip', bet: 500, payout: 950, result: 'win', time: '3h ago' },
-  { id: '14', game: 'Crash', bet: 100, payout: 320, result: 'win', time: '3h ago' },
-  { id: '15', game: 'Slots', bet: 200, payout: 0, result: 'loss', time: '4h ago' },
-  { id: '16', game: 'Blackjack', bet: 300, payout: 0, result: 'loss', time: '4h ago' },
-  { id: '17', game: 'Jackpot', bet: 1000, payout: 0, result: 'loss', time: '5h ago' },
-  { id: '18', game: 'Dice', bet: 50, payout: 98, result: 'win', time: '5h ago' },
-  { id: '19', game: 'Plinko', bet: 100, payout: 290, result: 'win', time: '6h ago' },
-  { id: '20', game: 'Roulette', bet: 400, payout: 0, result: 'loss', time: '6h ago' },
-]
-
 export default function ProfilePage() {
   const router = useRouter()
-  const { user, profile } = useAuth()
+  const { user, profile, refreshProfile } = useAuth()
   const { balance } = useBalance(user?.id)
 
   const [showPasswordModal, setShowPasswordModal] = useState(false)
   const [showLimitsModal, setShowLimitsModal] = useState(false)
-  const [recentGames] = useState<RecentGame[]>(MOCK_RECENT_GAMES)
+  const [editingUsername, setEditingUsername] = useState(false)
+  const [newUsername, setNewUsername] = useState('')
+  const [usernameSaving, setUsernameSaving] = useState(false)
+  const [recentGames, setRecentGames] = useState<GameRecord[]>([])
+  const [gamesLoading, setGamesLoading] = useState(true)
+
+  // Password change state
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmNewPassword, setConfirmNewPassword] = useState('')
+  const [passwordLoading, setPasswordLoading] = useState(false)
+  const [passwordError, setPasswordError] = useState<string | null>(null)
+  const [passwordSuccess, setPasswordSuccess] = useState(false)
 
   const username = profile?.username || 'Player'
   const email = user?.email || 'player@example.com'
-  const level = profile?.level || 12
-  const exp = profile?.exp || 7450
-  const totalWagered = profile?.total_wagered || 125000
-  const totalWon = profile?.total_won || 138500
-  const vipTier = profile?.vip_tier || 'gold'
+  const level = profile?.level || 1
+  const exp = profile?.exp || 0
+  const totalWagered = profile?.total_wagered || 0
+  const totalWon = profile?.total_won || 0
+  const vipTier = profile?.vip_tier || 'bronze'
+  const memberSince = user?.created_at
+    ? new Date(user.created_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+    : 'N/A'
 
-  const gamesPlayed = recentGames.length * 5 // mock
-  const wins = recentGames.filter((g) => g.result === 'win').length * 5
-  const winRate = gamesPlayed > 0 ? ((wins / gamesPlayed) * 100).toFixed(1) : '0.0'
+  // Fetch game history from Supabase
+  const fetchGames = useCallback(async () => {
+    if (!user) {
+      setGamesLoading(false)
+      return
+    }
+    const supabase = createClient()
+    const { data } = await supabase
+      .from('games')
+      .select('id, game_type, bet_amount, payout, multiplier, settled, created_at')
+      .eq('player_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(20)
+
+    if (data) setRecentGames(data)
+    setGamesLoading(false)
+  }, [user])
+
+  useEffect(() => {
+    fetchGames()
+  }, [fetchGames])
+
+  // Compute stats from profile data (games_played may not exist on profile type, fall back to recent games count)
+  const gamesPlayed = (profile as Record<string, unknown> | null)?.games_played as number ?? recentGames.length
+  const winCount = recentGames.filter((g) => g.payout > 0).length
+  const winRate = gamesPlayed > 0 ? ((winCount / Math.max(gamesPlayed, recentGames.length)) * 100).toFixed(1) : '0.0'
 
   const expForNextLevel = level * 1000
   const expProgress = (exp / expForNextLevel) * 100
@@ -84,6 +101,66 @@ export default function ProfilePage() {
   const vipProgress = nextVip
     ? ((totalWagered - currentVip.min) / (nextVip.min - currentVip.min)) * 100
     : 100
+
+  const handleUsernameEdit = async () => {
+    if (!user || !newUsername.trim() || newUsername === username) {
+      setEditingUsername(false)
+      return
+    }
+    setUsernameSaving(true)
+    const supabase = createClient()
+    const { error } = await supabase
+      .from('profiles')
+      .update({ username: newUsername.trim() })
+      .eq('id', user.id)
+
+    if (!error) {
+      await refreshProfile()
+    }
+    setUsernameSaving(false)
+    setEditingUsername(false)
+  }
+
+  const handlePasswordChange = async () => {
+    setPasswordError(null)
+    setPasswordSuccess(false)
+
+    if (newPassword.length < 8) {
+      setPasswordError('New password must be at least 8 characters.')
+      return
+    }
+    if (newPassword !== confirmNewPassword) {
+      setPasswordError('Passwords do not match.')
+      return
+    }
+
+    setPasswordLoading(true)
+    const supabase = createClient()
+    const { error } = await supabase.auth.updateUser({ password: newPassword })
+
+    if (error) {
+      setPasswordError(error.message)
+    } else {
+      setPasswordSuccess(true)
+      setCurrentPassword('')
+      setNewPassword('')
+      setConfirmNewPassword('')
+    }
+    setPasswordLoading(false)
+  }
+
+  const formatGameTime = (dateStr: string) => {
+    const now = new Date()
+    const date = new Date(dateStr)
+    const diffMs = now.getTime() - date.getTime()
+    const diffMin = Math.floor(diffMs / 60000)
+    if (diffMin < 1) return 'just now'
+    if (diffMin < 60) return `${diffMin}m ago`
+    const diffHr = Math.floor(diffMin / 60)
+    if (diffHr < 24) return `${diffHr}h ago`
+    const diffDays = Math.floor(diffHr / 24)
+    return `${diffDays}d ago`
+  }
 
   return (
     <div className="min-h-screen bg-[var(--casino-bg)]">
@@ -123,14 +200,48 @@ export default function ProfilePage() {
 
               {/* Info */}
               <div className="flex-1 text-center sm:text-left">
-                <h1 className="text-2xl font-bold text-white flex items-center gap-2 justify-center sm:justify-start">
-                  {username}
-                  <button className="text-[var(--casino-text-muted)] hover:text-[var(--casino-accent)] cursor-pointer transition-colors">
-                    <Edit2 className="w-4 h-4" />
-                  </button>
-                </h1>
+                <div className="flex items-center gap-2 justify-center sm:justify-start">
+                  {editingUsername ? (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={newUsername}
+                        onChange={(e) => setNewUsername(e.target.value)}
+                        className="bg-[var(--casino-surface)] border border-[var(--casino-border)] rounded-lg px-3 py-1 text-white text-lg font-bold focus:outline-none focus:border-[var(--casino-accent)]"
+                        maxLength={20}
+                        autoFocus
+                      />
+                      <button
+                        onClick={handleUsernameEdit}
+                        disabled={usernameSaving}
+                        className="p-1 text-[var(--casino-green)] hover:bg-[var(--casino-green)]/10 rounded cursor-pointer"
+                      >
+                        {usernameSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                      </button>
+                      <button
+                        onClick={() => setEditingUsername(false)}
+                        className="p-1 text-[var(--casino-red)] hover:bg-[var(--casino-red)]/10 rounded cursor-pointer"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <h1 className="text-2xl font-bold text-white">{username}</h1>
+                      <button
+                        onClick={() => { setNewUsername(username); setEditingUsername(true) }}
+                        className="text-[var(--casino-text-muted)] hover:text-[var(--casino-accent)] cursor-pointer transition-colors"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                    </>
+                  )}
+                </div>
                 <p className="text-sm text-[var(--casino-text-muted)] flex items-center gap-1.5 justify-center sm:justify-start mt-1">
                   <Mail className="w-3.5 h-3.5" /> {email}
+                </p>
+                <p className="text-xs text-[var(--casino-text-muted)] flex items-center gap-1.5 justify-center sm:justify-start mt-0.5">
+                  <Calendar className="w-3 h-3" /> Member since {memberSince}
                 </p>
 
                 {/* Level / XP Bar */}
@@ -167,12 +278,13 @@ export default function ProfilePage() {
         </motion.div>
 
         {/* Stats Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
           {[
             { label: 'Games Played', value: gamesPlayed.toLocaleString(), icon: <Gamepad2 className="w-5 h-5" />, color: 'text-[var(--casino-blue)]' },
             { label: 'Win Rate', value: `${winRate}%`, icon: <Target className="w-5 h-5" />, color: 'text-[var(--casino-green)]' },
             { label: 'Total Wagered', value: `$${totalWagered.toLocaleString()}`, icon: <TrendingUp className="w-5 h-5" />, color: 'text-[var(--casino-accent)]' },
             { label: 'Total Won', value: `$${totalWon.toLocaleString()}`, icon: <Trophy className="w-5 h-5" />, color: 'text-[var(--casino-purple-light)]' },
+            { label: 'Member Since', value: memberSince, icon: <Calendar className="w-5 h-5" />, color: 'text-zinc-400' },
           ].map((stat, i) => (
             <motion.div
               key={stat.label}
@@ -183,14 +295,14 @@ export default function ProfilePage() {
               <Card hover={false}>
                 <div className={cn('mb-2', stat.color)}>{stat.icon}</div>
                 <p className="text-xs text-[var(--casino-text-muted)]">{stat.label}</p>
-                <p className={cn('text-xl font-bold', stat.color)}>{stat.value}</p>
+                <p className={cn('text-lg font-bold', stat.color)}>{stat.value}</p>
               </Card>
             </motion.div>
           ))}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-6">
-          {/* Recent Games */}
+          {/* Game History Table */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -199,44 +311,85 @@ export default function ProfilePage() {
             <Card hover={false}>
               <div className="flex items-center gap-2 mb-4">
                 <Clock className="w-5 h-5 text-[var(--casino-text-muted)]" />
-                <h3 className="text-lg font-bold text-white">Recent Games</h3>
+                <h3 className="text-lg font-bold text-white">Game History</h3>
+                <span className="text-xs text-[var(--casino-text-muted)] ml-auto">Last 20 games</span>
               </div>
-              <div className="space-y-1">
-                {recentGames.map((game) => (
-                  <div
-                    key={game.id}
-                    className="flex items-center justify-between py-2.5 px-3 rounded-lg hover:bg-[var(--casino-surface)] transition-colors"
+
+              {gamesLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="w-6 h-6 animate-spin text-[var(--casino-accent)]" />
+                </div>
+              ) : recentGames.length === 0 ? (
+                <div className="text-center py-12">
+                  <Gamepad2 className="w-10 h-10 mx-auto mb-3 text-zinc-700" />
+                  <p className="text-sm text-[var(--casino-text-muted)]">No games played yet</p>
+                  <button
+                    onClick={() => router.push('/')}
+                    className="mt-3 text-sm text-[var(--casino-accent)] hover:underline cursor-pointer"
                   >
-                    <div className="flex items-center gap-3">
-                      <div className={cn(
-                        'w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold',
-                        game.result === 'win' ? 'bg-[var(--casino-green)]/10 text-[var(--casino-green)]' :
-                        game.result === 'push' ? 'bg-[var(--casino-accent)]/10 text-[var(--casino-accent)]' :
-                        'bg-[var(--casino-red)]/10 text-[var(--casino-red)]'
-                      )}>
-                        {game.result === 'win' ? 'W' : game.result === 'push' ? 'P' : 'L'}
-                      </div>
-                      <div>
-                        <p className="text-sm text-white font-medium">{game.game}</p>
-                        <p className="text-[10px] text-[var(--casino-text-muted)]">{game.time}</p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-xs text-[var(--casino-text-muted)]">Bet ${game.bet}</p>
-                      <p className={cn(
-                        'text-sm font-bold',
-                        game.result === 'win' ? 'text-[var(--casino-green)]' :
-                        game.result === 'push' ? 'text-[var(--casino-accent)]' :
-                        'text-[var(--casino-red)]'
-                      )}>
-                        {game.result === 'win' ? `+$${game.payout.toLocaleString()}` :
-                         game.result === 'push' ? `$${game.payout.toLocaleString()}` :
-                         `-$${game.bet.toLocaleString()}`}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                    Start playing
+                  </button>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-[var(--casino-border)]">
+                        <th className="text-left py-2.5 px-2 text-[var(--casino-text-muted)] font-medium text-xs">Game</th>
+                        <th className="text-right py-2.5 px-2 text-[var(--casino-text-muted)] font-medium text-xs">Bet</th>
+                        <th className="text-right py-2.5 px-2 text-[var(--casino-text-muted)] font-medium text-xs">Payout</th>
+                        <th className="text-right py-2.5 px-2 text-[var(--casino-text-muted)] font-medium text-xs hidden sm:table-cell">Multi</th>
+                        <th className="text-right py-2.5 px-2 text-[var(--casino-text-muted)] font-medium text-xs">Time</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {recentGames.map((game) => {
+                        const isWin = game.payout > 0
+                        const isPush = game.payout === game.bet_amount
+                        return (
+                          <tr
+                            key={game.id}
+                            className="border-b border-[var(--casino-border)]/50 hover:bg-[var(--casino-surface)] transition-colors"
+                          >
+                            <td className="py-2.5 px-2">
+                              <div className="flex items-center gap-2">
+                                <div className={cn(
+                                  'w-7 h-7 rounded-lg flex items-center justify-center text-[10px] font-bold',
+                                  isWin ? 'bg-[var(--casino-green)]/10 text-[var(--casino-green)]' :
+                                  isPush ? 'bg-[var(--casino-accent)]/10 text-[var(--casino-accent)]' :
+                                  'bg-[var(--casino-red)]/10 text-[var(--casino-red)]'
+                                )}>
+                                  {isWin ? 'W' : isPush ? 'P' : 'L'}
+                                </div>
+                                <span className="text-white font-medium capitalize">{game.game_type}</span>
+                              </div>
+                            </td>
+                            <td className="py-2.5 px-2 text-right text-[var(--casino-text-muted)] font-mono text-xs">
+                              ${game.bet_amount.toLocaleString()}
+                            </td>
+                            <td className={cn(
+                              'py-2.5 px-2 text-right font-mono font-bold text-sm',
+                              isWin ? 'text-[var(--casino-green)]' :
+                              isPush ? 'text-[var(--casino-accent)]' :
+                              'text-[var(--casino-red)]'
+                            )}>
+                              {isWin ? `+$${game.payout.toLocaleString()}` :
+                               isPush ? `$${game.payout.toLocaleString()}` :
+                               `-$${game.bet_amount.toLocaleString()}`}
+                            </td>
+                            <td className="py-2.5 px-2 text-right text-[var(--casino-text-muted)] text-xs hidden sm:table-cell">
+                              {game.multiplier ? `${game.multiplier}x` : '-'}
+                            </td>
+                            <td className="py-2.5 px-2 text-right text-[var(--casino-text-muted)] text-xs whitespace-nowrap">
+                              {formatGameTime(game.created_at)}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </Card>
           </motion.div>
 
@@ -275,7 +428,7 @@ export default function ProfilePage() {
                       />
                     </div>
                     <p className="text-[10px] text-[var(--casino-text-muted)] mt-1">
-                      Wager ${(nextVip.min - totalWagered).toLocaleString()} more to reach {nextVip.name}
+                      Wager ${Math.max(0, nextVip.min - totalWagered).toLocaleString()} more to reach {nextVip.name}
                     </p>
                   </div>
                 )}
@@ -322,12 +475,24 @@ export default function ProfilePage() {
       </div>
 
       {/* Change Password Modal */}
-      <Modal open={showPasswordModal} onClose={() => setShowPasswordModal(false)} title="Change Password">
+      <Modal open={showPasswordModal} onClose={() => { setShowPasswordModal(false); setPasswordError(null); setPasswordSuccess(false) }} title="Change Password">
         <div className="space-y-4">
+          {passwordError && (
+            <div className="rounded-lg border border-[#EF4444]/30 bg-[#EF4444]/10 px-4 py-2 text-sm text-[#EF4444]">
+              {passwordError}
+            </div>
+          )}
+          {passwordSuccess && (
+            <div className="rounded-lg border border-[#00FF88]/30 bg-[#00FF88]/10 px-4 py-2 text-sm text-[#00FF88]">
+              Password updated successfully!
+            </div>
+          )}
           <div>
             <label className="text-sm text-[var(--casino-text-muted)] mb-1 block">Current Password</label>
             <input
               type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
               className="w-full bg-[var(--casino-surface)] border border-[var(--casino-border)] rounded-xl px-4 py-3 text-white focus:outline-none focus:border-[var(--casino-accent)] transition-colors"
             />
           </div>
@@ -335,6 +500,8 @@ export default function ProfilePage() {
             <label className="text-sm text-[var(--casino-text-muted)] mb-1 block">New Password</label>
             <input
               type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
               className="w-full bg-[var(--casino-surface)] border border-[var(--casino-border)] rounded-xl px-4 py-3 text-white focus:outline-none focus:border-[var(--casino-accent)] transition-colors"
             />
           </div>
@@ -342,10 +509,18 @@ export default function ProfilePage() {
             <label className="text-sm text-[var(--casino-text-muted)] mb-1 block">Confirm New Password</label>
             <input
               type="password"
+              value={confirmNewPassword}
+              onChange={(e) => setConfirmNewPassword(e.target.value)}
               className="w-full bg-[var(--casino-surface)] border border-[var(--casino-border)] rounded-xl px-4 py-3 text-white focus:outline-none focus:border-[var(--casino-accent)] transition-colors"
             />
           </div>
-          <Button variant="primary" size="lg" className="w-full">
+          <Button
+            variant="primary"
+            size="lg"
+            className="w-full"
+            loading={passwordLoading}
+            onClick={handlePasswordChange}
+          >
             Update Password
           </Button>
         </div>

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import crypto from "crypto";
 import type { GameType, Json } from "@/lib/supabase/database.types";
 
@@ -34,6 +35,7 @@ interface GameRequest {
   action: string;
   betAmount?: number;
   gameData?: Record<string, unknown>;
+  demoMode?: boolean;
 }
 
 function generateServerSeed(): string {
@@ -452,8 +454,65 @@ function calculateHandTotal(cards: Card[]): number {
   return total;
 }
 
+/**
+ * Handle demo mode: calculate and return results without touching the database.
+ */
+function handleDemoMode(
+  gameType: GameType,
+  betAmount: number,
+  gameData: Record<string, unknown>
+): NextResponse {
+  const serverSeed = generateServerSeed();
+  const serverSeedHash = hashServerSeed(serverSeed);
+  const clientSeed =
+    (gameData.clientSeed as string) || crypto.randomBytes(16).toString("hex");
+  const nonce = 1;
+
+  const { result, multiplier } = generateGameResult(
+    gameType,
+    serverSeed,
+    clientSeed,
+    nonce,
+    gameData
+  );
+
+  const payout = Math.floor(betAmount * multiplier);
+
+  return NextResponse.json({
+    gameId: null,
+    result,
+    payout,
+    multiplier,
+    balanceAfter: null, // Demo mode: no persistent balance
+    settled: true,
+    serverSeedHash,
+    demoMode: true,
+  });
+}
+
 export async function POST(request: NextRequest) {
   try {
+    const body: GameRequest = await request.json();
+    const { gameType, action, betAmount, gameData = {}, demoMode } = body;
+
+    // ---------- Demo mode (no auth required) ----------
+    if (demoMode) {
+      if (!gameType || !VALID_GAME_TYPES.includes(gameType)) {
+        return NextResponse.json(
+          { error: "Invalid game type" },
+          { status: 400 }
+        );
+      }
+      if (!betAmount || betAmount <= 0) {
+        return NextResponse.json(
+          { error: "Invalid bet amount" },
+          { status: 400 }
+        );
+      }
+      return handleDemoMode(gameType, betAmount, gameData);
+    }
+
+    // ---------- Authenticated mode ----------
     const supabase = await createClient();
 
     // Verify authentication
@@ -468,9 +527,6 @@ export async function POST(request: NextRequest) {
         { status: 401 }
       );
     }
-
-    const body: GameRequest = await request.json();
-    const { gameType, action, betAmount, gameData = {} } = body;
 
     // Validate action
     if (!action || !VALID_ACTIONS.includes(action)) {
@@ -496,10 +552,10 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Get current balance
-      const { data: profile, error: profileError } = await supabase
+      // Get current balance using admin client for reliability
+      const { data: profile, error: profileError } = await supabaseAdmin
         .from("profiles")
-        .select("balance")
+        .select("balance, total_wagered, total_won")
         .eq("id", user.id)
         .single();
 
@@ -539,13 +595,17 @@ export async function POST(request: NextRequest) {
         gameType !== "blackjack" ||
         (result as Record<string, unknown>).playerBlackjack === true;
 
-      // Atomic balance update
-      const { error: balanceError } = await supabase
+      // Atomic balance update using admin client
+      const updateData: Record<string, unknown> = {
+        balance: newBalance,
+        total_wagered: (profile.total_wagered || 0) + betAmount,
+      };
+      if (settled && payout > 0) {
+        updateData.total_won = (profile.total_won || 0) + payout;
+      }
+      const { error: balanceError } = await supabaseAdmin
         .from("profiles")
-        .update({
-          balance: newBalance,
-          total_wagered: profile.balance + betAmount, // will be corrected with RPC
-        })
+        .update(updateData)
         .eq("id", user.id);
 
       if (balanceError) {
@@ -555,8 +615,8 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Record the game
-      const { data: gameRecord, error: gameError } = await supabase
+      // Record the game using admin client
+      const { data: gameRecord, error: gameError } = await supabaseAdmin
         .from("games")
         .insert({
           player_id: user.id,
@@ -578,7 +638,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Record bet transaction
-      await supabase.from("transactions").insert({
+      await supabaseAdmin.from("transactions").insert({
         player_id: user.id,
         type: "bet",
         amount: betAmount,
@@ -589,7 +649,7 @@ export async function POST(request: NextRequest) {
 
       // Record win transaction if applicable
       if (payout > 0 && settled) {
-        await supabase.from("transactions").insert({
+        await supabaseAdmin.from("transactions").insert({
           player_id: user.id,
           type: "win",
           amount: payout,
@@ -612,7 +672,7 @@ export async function POST(request: NextRequest) {
 
     // For game actions on existing games (hit, stand, cashout, etc.)
     if (body.gameId) {
-      const { data: existingGame, error: gameError } = await supabase
+      const { data: existingGame, error: gameError } = await supabaseAdmin
         .from("games")
         .select("*")
         .eq("id", body.gameId)
@@ -627,7 +687,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const { data: profile } = await supabase
+      const { data: profile } = await supabaseAdmin
         .from("profiles")
         .select("balance")
         .eq("id", user.id)
@@ -724,7 +784,6 @@ export async function POST(request: NextRequest) {
       } else if (existingGame.game_type === "mines" && action === "pick") {
         const serverSeed = generateServerSeed();
         const newNonce = existingGame.nonce + 1;
-        const combinedSeed = `${serverSeed}:${existingGame.client_seed}:${newNonce}`;
 
         const { result: mineResult, multiplier: mineMult } =
           generateGameResult(
@@ -759,7 +818,7 @@ export async function POST(request: NextRequest) {
       const newBalance = profile.balance + payout;
 
       // Update game record
-      await supabase
+      await supabaseAdmin
         .from("games")
         .update({
           result: newResult as unknown as Json,
@@ -772,13 +831,13 @@ export async function POST(request: NextRequest) {
 
       // Update balance
       if (payout > 0) {
-        await supabase
+        await supabaseAdmin
           .from("profiles")
           .update({ balance: newBalance })
           .eq("id", user.id);
 
         // Record win transaction
-        await supabase.from("transactions").insert({
+        await supabaseAdmin.from("transactions").insert({
           player_id: user.id,
           type: "win",
           amount: payout,

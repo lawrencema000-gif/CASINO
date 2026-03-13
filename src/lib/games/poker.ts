@@ -1,301 +1,190 @@
-// ============================================================================
-// Poker Card Engine - Ported from poker.js
-// Card encoding: (suit << 4) | value
-// ============================================================================
+import type { BlackjackCard } from '@/lib/types'
 
-import { createHash } from 'crypto';
-import { Card, CardSuit, CardValue, DecodedCard } from './types';
+// We reuse BlackjackCard for simplicity (suit + rank + value).
+// In video poker context, value is the face value for hand evaluation.
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-export const SUITS: Record<number, CardSuit> = {
-  1: CardSuit.DIAMOND,
-  2: CardSuit.CLUB,
-  3: CardSuit.HEART,
-  4: CardSuit.SPADE,
-};
-
-export const VALUES: Record<number, CardValue> = {
-  2: CardValue.TWO,
-  3: CardValue.THREE,
-  4: CardValue.FOUR,
-  5: CardValue.FIVE,
-  6: CardValue.SIX,
-  7: CardValue.SEVEN,
-  8: CardValue.EIGHT,
-  9: CardValue.NINE,
-  10: CardValue.TEN,
-  11: CardValue.JACK,
-  12: CardValue.QUEEN,
-  13: CardValue.KING,
-  14: CardValue.ACE,
-};
-
-export const SUIT_SYMBOLS: Record<number, string> = {
-  [CardSuit.SPADE]: '\u2660',
-  [CardSuit.HEART]: '\u2665',
-  [CardSuit.CLUB]: '\u2663',
-  [CardSuit.DIAMOND]: '\u2666',
-};
-
-export const VALUE_SYMBOLS: Record<number, string> = {
-  2: '2',
-  3: '3',
-  4: '4',
-  5: '5',
-  6: '6',
-  7: '7',
-  8: '8',
-  9: '9',
-  10: '10',
-  11: 'J',
-  12: 'Q',
-  13: 'K',
-  14: 'A',
-};
-
-const SUIT_LETTER_MAP: Record<string, number> = {
-  S: CardSuit.SPADE,
-  H: CardSuit.HEART,
-  C: CardSuit.CLUB,
-  D: CardSuit.DIAMOND,
-};
-
-const VALUE_STRING_MAP: Record<string, number> = {
-  A: 14, K: 13, Q: 12, J: 11,
-  '10': 10, '9': 9, '8': 8, '7': 7,
-  '6': 6, '5': 5, '4': 4, '3': 3, '2': 2,
-};
-
-export const RED_JOKER: Card = (6 << 4) | 15;
-export const BLACK_JOKER: Card = (5 << 4) | 15;
+type Card = BlackjackCard
 
 // ---------------------------------------------------------------------------
-// Card Encoding / Decoding
+// Hand rankings with pay table (Jacks or Better)
 // ---------------------------------------------------------------------------
 
-/** Encode a card from suit and value to the numeric format */
-export function encodeCard(suit: CardSuit, value: CardValue): Card {
-  return (suit << 4) | value;
+export interface HandRanking {
+  name: string
+  payout: number // multiplier on bet
+  rank: number   // higher = better
 }
 
-/** Decode a numeric card into suit and value */
-export function decodeCard(card: Card): DecodedCard {
-  return {
-    suit: (card >> 4) as CardSuit,
-    value: (card & 0x0f) as CardValue,
-    encoded: card,
-  };
-}
-
-/** Get the suit of an encoded card */
-export function getCardSuit(card: Card): CardSuit {
-  return (card >> 4) as CardSuit;
-}
-
-/** Get the value of an encoded card */
-export function getCardValue(card: Card): CardValue {
-  return (card & 0x0f) as CardValue;
-}
+export const HAND_RANKINGS: HandRanking[] = [
+  { name: 'Royal Flush', payout: 800, rank: 9 },
+  { name: 'Straight Flush', payout: 50, rank: 8 },
+  { name: 'Four of a Kind', payout: 25, rank: 7 },
+  { name: 'Full House', payout: 9, rank: 6 },
+  { name: 'Flush', payout: 6, rank: 5 },
+  { name: 'Straight', payout: 4, rank: 4 },
+  { name: 'Three of a Kind', payout: 3, rank: 3 },
+  { name: 'Two Pair', payout: 2, rank: 2 },
+  { name: 'Jacks or Better', payout: 1, rank: 1 },
+  { name: 'Nothing', payout: 0, rank: 0 },
+]
 
 // ---------------------------------------------------------------------------
-// Card Display
+// Deck helpers
 // ---------------------------------------------------------------------------
 
-/** Convert an encoded card to a display string like "A\u2660" */
-export function cardToString(card: Card): string {
-  if (card === RED_JOKER) return 'JKR';
-  if (card === BLACK_JOKER) return 'JKB';
-  if (card === 0) return '??';
-  const suit = card >> 4;
-  const value = card & 0x0f;
-  return (VALUE_SYMBOLS[value] ?? '?') + (SUIT_SYMBOLS[suit] ?? '?');
+const SUITS: Card['suit'][] = ['hearts', 'diamonds', 'clubs', 'spades']
+const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
+
+function rankValue(rank: string): number {
+  const idx = RANKS.indexOf(rank)
+  return idx + 2 // '2' = 2, ..., 'A' = 14
 }
 
-/** Parse a string like "SА" or "H10" into an encoded card */
-export function parseCard(str: string): Card {
-  if (str === 'JKR') return RED_JOKER;
-  if (str === 'JKB') return BLACK_JOKER;
-  if (!str || str.length < 2) return 0;
-
-  const suitChar = str.charAt(0).toUpperCase();
-  const valueStr = str.substring(1);
-
-  const suit = SUIT_LETTER_MAP[suitChar];
-  const value = VALUE_STRING_MAP[valueStr];
-
-  if (suit && value) {
-    return (suit << 4) | value;
+function createFullDeck(): Card[] {
+  const deck: Card[] = []
+  for (const suit of SUITS) {
+    for (const rank of RANKS) {
+      deck.push({ suit, rank, value: rankValue(rank) })
+    }
   }
-  return 0;
-}
-
-/** Convert an array of encoded cards to display strings */
-export function visualize(cards: Card[]): string[] {
-  return cards.map(cardToString);
+  // Shuffle
+  for (let i = deck.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[deck[i], deck[j]] = [deck[j], deck[i]]
+  }
+  return deck
 }
 
 // ---------------------------------------------------------------------------
-// Deck Operations
+// Deal and redraw
 // ---------------------------------------------------------------------------
 
-export interface DeckOptions {
-  noJoker?: boolean;
-  noSuits?: CardSuit[];
-  noValues?: CardValue[];
-  noCards?: Card[];
+/**
+ * Deal 5 cards from the deck.
+ */
+export function deal(deck: Card[]): { hand: Card[]; deck: Card[] } {
+  const remaining = [...deck]
+  const hand = remaining.splice(0, 5)
+  return { hand, deck: remaining }
 }
 
 /**
- * Create a full 52-card deck (or customized).
- * By default excludes jokers (standard poker deck).
+ * Redraw cards not held.
+ * holdMask is an array of 5 booleans; true = keep, false = replace.
  */
-export function createDeck(options?: DeckOptions): Card[] {
-  const noJoker = options?.noJoker ?? true;
-  const noSuits = options?.noSuits ?? [];
-  const noValues = options?.noValues ?? [];
-  const noCards = options?.noCards ?? [];
+export function redraw(
+  hand: Card[],
+  holdMask: boolean[],
+  deck: Card[]
+): { hand: Card[]; deck: Card[] } {
+  const remaining = [...deck]
+  const newHand = hand.map((card, i) => {
+    if (holdMask[i]) return card
+    return remaining.shift()!
+  })
+  return { hand: newHand, deck: remaining }
+}
 
-  const cards: Card[] = [];
+// ---------------------------------------------------------------------------
+// Hand evaluation
+// ---------------------------------------------------------------------------
 
-  for (let suit = 1; suit <= 4; suit++) {
-    if (noSuits.includes(suit as CardSuit)) continue;
+export function evaluateHand(cards: Card[]): HandRanking {
+  if (cards.length !== 5) {
+    return HAND_RANKINGS[HAND_RANKINGS.length - 1] // Nothing
+  }
 
-    for (let value = 2; value <= 14; value++) {
-      if (noValues.includes(value as CardValue)) continue;
+  const values = cards.map((c) => rankValue(c.rank)).sort((a, b) => a - b)
+  const suits = cards.map((c) => c.suit)
 
-      const card = (suit << 4) | value;
-      if (noCards.includes(card)) continue;
+  const isFlush = suits.every((s) => s === suits[0])
 
-      cards.push(card);
+  // Check straight (including A-low: A,2,3,4,5)
+  let isStraight = false
+  const uniqueValues = [...new Set(values)]
+  if (uniqueValues.length === 5) {
+    if (values[4] - values[0] === 4) {
+      isStraight = true
+    }
+    // Ace-low straight: A(14), 2, 3, 4, 5
+    if (
+      values[0] === 2 &&
+      values[1] === 3 &&
+      values[2] === 4 &&
+      values[3] === 5 &&
+      values[4] === 14
+    ) {
+      isStraight = true
     }
   }
 
-  if (!noJoker) {
-    cards.push(RED_JOKER);
-    cards.push(BLACK_JOKER);
+  // Count occurrences of each value
+  const counts: Record<number, number> = {}
+  for (const v of values) {
+    counts[v] = (counts[v] || 0) + 1
+  }
+  const countValues = Object.values(counts).sort((a, b) => b - a)
+
+  // Royal Flush
+  if (
+    isFlush &&
+    isStraight &&
+    values[0] === 10 &&
+    values[4] === 14
+  ) {
+    return HAND_RANKINGS[0]
   }
 
-  return cards;
+  // Straight Flush
+  if (isFlush && isStraight) {
+    return HAND_RANKINGS[1]
+  }
+
+  // Four of a Kind
+  if (countValues[0] === 4) {
+    return HAND_RANKINGS[2]
+  }
+
+  // Full House
+  if (countValues[0] === 3 && countValues[1] === 2) {
+    return HAND_RANKINGS[3]
+  }
+
+  // Flush
+  if (isFlush) {
+    return HAND_RANKINGS[4]
+  }
+
+  // Straight
+  if (isStraight) {
+    return HAND_RANKINGS[5]
+  }
+
+  // Three of a Kind
+  if (countValues[0] === 3) {
+    return HAND_RANKINGS[6]
+  }
+
+  // Two Pair
+  if (countValues[0] === 2 && countValues[1] === 2) {
+    return HAND_RANKINGS[7]
+  }
+
+  // Jacks or Better (pair of J, Q, K, or A)
+  if (countValues[0] === 2) {
+    const pairValue = Number(
+      Object.entries(counts).find(([, c]) => c === 2)?.[0]
+    )
+    if (pairValue >= 11) {
+      return HAND_RANKINGS[8]
+    }
+  }
+
+  // Nothing
+  return HAND_RANKINGS[9]
 }
 
 /**
- * Draw n random cards from the deck using cryptographic randomness.
- * Mutates the deck array (removes drawn cards).
+ * Create a fresh shuffled deck for video poker.
  */
-export function drawCards(deck: Card[], count: number): Card[] {
-  if (deck.length < count) {
-    throw new Error(`Not enough cards: need ${count}, have ${deck.length}`);
-  }
-
-  const drawn: Card[] = [];
-  let len = deck.length;
-
-  for (let n = 0; n < count; n++) {
-    // Use crypto for randomness
-    const randomBuf = require('crypto').randomBytes(4);
-    const randomInt = randomBuf.readUInt32BE(0);
-    const i = randomInt % len;
-
-    drawn.push(deck[i]);
-    deck.splice(i, 1);
-    len--;
-  }
-
-  return drawn;
-}
-
-/**
- * Draw n cards deterministically using a seed hash.
- * Mutates the deck array.
- */
-export function drawCardsDeterministic(
-  deck: Card[],
-  count: number,
-  seedHash: string
-): Card[] {
-  if (deck.length < count) {
-    throw new Error(`Not enough cards: need ${count}, have ${deck.length}`);
-  }
-
-  const drawn: Card[] = [];
-  let len = deck.length;
-
-  for (let n = 0; n < count; n++) {
-    const subHash = createHash('sha256')
-      .update(`${seedHash}:draw:${n}`)
-      .digest('hex');
-    const randomInt = parseInt(subHash.substring(0, 8), 16);
-    const i = randomInt % len;
-
-    drawn.push(deck[i]);
-    deck.splice(i, 1);
-    len--;
-  }
-
-  return drawn;
-}
-
-/**
- * Shuffle the deck in place using Fisher-Yates with crypto randomness.
- * Returns the same array reference.
- */
-export function shuffleDeck(deck: Card[]): Card[] {
-  const crypto = require('crypto');
-  for (let i = deck.length - 1; i > 0; i--) {
-    const buf = crypto.randomBytes(4);
-    const j = buf.readUInt32BE(0) % (i + 1);
-    [deck[i], deck[j]] = [deck[j], deck[i]];
-  }
-  return deck;
-}
-
-/**
- * Deterministically shuffle using a seed hash.
- */
-export function shuffleDeckDeterministic(deck: Card[], seedHash: string): Card[] {
-  for (let i = deck.length - 1; i > 0; i--) {
-    const subHash = createHash('sha256')
-      .update(`${seedHash}:shuffle:${i}`)
-      .digest('hex');
-    const j = parseInt(subHash.substring(0, 8), 16) % (i + 1);
-    [deck[i], deck[j]] = [deck[j], deck[i]];
-  }
-  return deck;
-}
-
-// ---------------------------------------------------------------------------
-// Sorting
-// ---------------------------------------------------------------------------
-
-/** Sort cards by value descending, then by suit descending */
-export function sortByValue(cards: Card[]): Card[] {
-  return [...cards].sort((a, b) => {
-    const aValue = a & 0x0f;
-    const bValue = b & 0x0f;
-    if (aValue !== bValue) return bValue - aValue;
-    return (b >> 4) - (a >> 4);
-  });
-}
-
-/** Sort cards by suit descending, then by value descending */
-export function sortBySuit(cards: Card[]): Card[] {
-  return [...cards].sort((a, b) => {
-    const aSuit = a >> 4;
-    const bSuit = b >> 4;
-    if (aSuit !== bSuit) return bSuit - aSuit;
-    return (b & 0x0f) - (a & 0x0f);
-  });
-}
-
-/** Clone an array of cards */
-export function cloneCards(cards: Card[]): Card[] {
-  return cards.slice();
-}
-
-/** Merge two card arrays */
-export function mergeCards(a: Card[], b: Card[]): Card[] {
-  return a.concat(b);
-}
+export { createFullDeck }

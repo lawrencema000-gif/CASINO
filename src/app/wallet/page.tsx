@@ -1,11 +1,11 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Wallet, ArrowDownCircle, ArrowUpCircle, TrendingUp, TrendingDown,
   Trophy, DollarSign, Filter, ChevronLeft, ChevronRight, Gamepad2,
-  ArrowLeft
+  ArrowLeft, Gift, Flame, Loader2, CheckCircle2, Coins
 } from 'lucide-react'
 import Button from '@/components/ui/Button'
 import Card from '@/components/ui/Card'
@@ -14,36 +14,25 @@ import { cn } from '@/components/ui/cn'
 import { useAuth } from '@/hooks/useAuth'
 import { useBalance } from '@/hooks/useBalance'
 import { useRouter } from 'next/navigation'
+import { createClient } from '@/lib/supabase/client'
 
 type TransactionType = 'bet' | 'win' | 'deposit' | 'withdrawal' | 'bonus'
 
 interface Transaction {
   id: string
-  date: string
   type: TransactionType
   amount: number
-  balanceAfter: number
-  game?: string
-  description: string
+  balance_after: number
+  game_id: string | null
+  description: string | null
+  created_at: string
 }
 
-const MOCK_TRANSACTIONS: Transaction[] = [
-  { id: '1', date: '2026-03-13T14:32:00', type: 'win', amount: 2500, balanceAfter: 12500, game: 'Blackjack', description: 'Blackjack win' },
-  { id: '2', date: '2026-03-13T14:30:00', type: 'bet', amount: -1000, balanceAfter: 10000, game: 'Blackjack', description: 'Blackjack bet' },
-  { id: '3', date: '2026-03-13T13:15:00', type: 'win', amount: 5200, balanceAfter: 11000, game: 'Slots', description: 'Big win on Slots!' },
-  { id: '4', date: '2026-03-13T13:10:00', type: 'bet', amount: -500, balanceAfter: 5800, game: 'Slots', description: 'Slots spin' },
-  { id: '5', date: '2026-03-13T12:00:00', type: 'deposit', amount: 5000, balanceAfter: 6300, description: 'Deposit via card' },
-  { id: '6', date: '2026-03-12T22:45:00', type: 'bonus', amount: 500, balanceAfter: 1300, description: 'Daily login bonus' },
-  { id: '7', date: '2026-03-12T21:30:00', type: 'bet', amount: -800, balanceAfter: 800, game: 'Roulette', description: 'Roulette bet' },
-  { id: '8', date: '2026-03-12T21:28:00', type: 'win', amount: 1600, balanceAfter: 1600, game: 'Roulette', description: 'Roulette win - Red' },
-  { id: '9', date: '2026-03-12T20:00:00', type: 'deposit', amount: 2000, balanceAfter: 2000, description: 'Initial deposit' },
-  { id: '10', date: '2026-03-12T18:00:00', type: 'withdrawal', amount: -3000, balanceAfter: 0, description: 'Withdrawal to bank' },
-  { id: '11', date: '2026-03-11T16:40:00', type: 'win', amount: 12000, balanceAfter: 15000, game: 'Plinko', description: 'Plinko big drop!' },
-  { id: '12', date: '2026-03-11T16:38:00', type: 'bet', amount: -200, balanceAfter: 3000, game: 'Plinko', description: 'Plinko bet' },
-  { id: '13', date: '2026-03-11T15:00:00', type: 'bet', amount: -500, balanceAfter: 3200, game: 'Poker', description: 'Poker ante' },
-  { id: '14', date: '2026-03-11T15:05:00', type: 'win', amount: 1200, balanceAfter: 3700, game: 'Poker', description: 'Poker win - Full House' },
-  { id: '15', date: '2026-03-10T10:00:00', type: 'bonus', amount: 1000, balanceAfter: 2500, description: 'Welcome bonus' },
-]
+interface DailyBonusData {
+  day_streak: number
+  last_claimed: string
+  bonus_amount: number
+}
 
 const typeConfig: Record<TransactionType, { label: string; icon: React.ReactNode; color: string; bg: string }> = {
   bet: { label: 'Bet', icon: <Gamepad2 className="w-3.5 h-3.5" />, color: 'text-[var(--casino-red)]', bg: 'bg-[var(--casino-red)]/10' },
@@ -53,17 +42,75 @@ const typeConfig: Record<TransactionType, { label: string; icon: React.ReactNode
   bonus: { label: 'Bonus', icon: <DollarSign className="w-3.5 h-3.5" />, color: 'text-[var(--casino-purple-light)]', bg: 'bg-[var(--casino-purple)]/10' },
 }
 
+const DEPOSIT_OPTIONS = [1000, 5000, 10000, 50000]
+
 export default function WalletPage() {
   const router = useRouter()
-  const { user } = useAuth()
-  const { balance } = useBalance(user?.id)
+  const { user, refreshProfile } = useAuth()
+  const { balance, refreshBalance } = useBalance(user?.id)
 
-  const [transactions] = useState<Transaction[]>(MOCK_TRANSACTIONS)
+  const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [txLoading, setTxLoading] = useState(true)
   const [filterType, setFilterType] = useState<TransactionType | 'all'>('all')
   const [currentPage, setCurrentPage] = useState(1)
-  const [showDeposit, setShowDeposit] = useState(false)
-  const [showWithdraw, setShowWithdraw] = useState(false)
+  const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw'>('deposit')
+  const [showDepositSuccess, setShowDepositSuccess] = useState(false)
+  const [depositingAmount, setDepositingAmount] = useState<number | null>(null)
+  const [withdrawAmount, setWithdrawAmount] = useState('')
+  const [withdrawing, setWithdrawing] = useState(false)
+
+  // Daily bonus state
+  const [dailyBonus, setDailyBonus] = useState<DailyBonusData | null>(null)
+  const [canClaimBonus, setCanClaimBonus] = useState(false)
+  const [claimingBonus, setClaimingBonus] = useState(false)
+
   const perPage = 8
+
+  // Fetch transactions from Supabase
+  const fetchTransactions = useCallback(async () => {
+    if (!user) {
+      setTxLoading(false)
+      return
+    }
+    const supabase = createClient()
+    const { data } = await supabase
+      .from('transactions')
+      .select('id, type, amount, balance_after, game_id, description, created_at')
+      .eq('player_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(100)
+
+    if (data) setTransactions(data as Transaction[])
+    setTxLoading(false)
+  }, [user])
+
+  // Fetch daily bonus info
+  const fetchDailyBonus = useCallback(async () => {
+    if (!user) return
+    const supabase = createClient()
+    const { data } = await supabase
+      .from('daily_bonuses')
+      .select('day_streak, last_claimed, bonus_amount')
+      .eq('player_id', user.id)
+      .single()
+
+    if (data) {
+      setDailyBonus(data)
+      // Check if can claim today
+      const lastClaimed = new Date(data.last_claimed)
+      const now = new Date()
+      const diffHours = (now.getTime() - lastClaimed.getTime()) / (1000 * 60 * 60)
+      setCanClaimBonus(diffHours >= 24)
+    } else {
+      // No record - can claim first bonus
+      setCanClaimBonus(true)
+    }
+  }, [user])
+
+  useEffect(() => {
+    fetchTransactions()
+    fetchDailyBonus()
+  }, [fetchTransactions, fetchDailyBonus])
 
   const filtered = useMemo(() => {
     return filterType === 'all' ? transactions : transactions.filter((t) => t.type === filterType)
@@ -86,10 +133,128 @@ export default function WalletPage() {
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
   }
 
+  // Handle deposit (play money)
+  const handleDeposit = async (amount: number) => {
+    if (!user) return
+    setDepositingAmount(amount)
+
+    const supabase = createClient()
+    const newBalance = balance + amount
+
+    // Update balance
+    const { error: balanceError } = await supabase
+      .from('profiles')
+      .update({ balance: newBalance })
+      .eq('id', user.id)
+
+    if (balanceError) {
+      setDepositingAmount(null)
+      return
+    }
+
+    // Record transaction
+    await supabase.from('transactions').insert({
+      player_id: user.id,
+      type: 'deposit',
+      amount,
+      balance_after: newBalance,
+      description: `Deposit - ${amount.toLocaleString()} credits`,
+    })
+
+    refreshBalance()
+    await fetchTransactions()
+    setDepositingAmount(null)
+    setShowDepositSuccess(true)
+    setTimeout(() => setShowDepositSuccess(false), 2000)
+  }
+
+  // Handle withdraw
+  const handleWithdraw = async () => {
+    if (!user) return
+    const amount = parseFloat(withdrawAmount)
+    if (isNaN(amount) || amount <= 0 || amount > balance) return
+
+    setWithdrawing(true)
+    const supabase = createClient()
+    const newBalance = balance - amount
+
+    const { error: balanceError } = await supabase
+      .from('profiles')
+      .update({ balance: newBalance })
+      .eq('id', user.id)
+
+    if (!balanceError) {
+      await supabase.from('transactions').insert({
+        player_id: user.id,
+        type: 'withdrawal',
+        amount: -amount,
+        balance_after: newBalance,
+        description: `Withdrawal - ${amount.toLocaleString()} credits`,
+      })
+
+      refreshBalance()
+      await fetchTransactions()
+      setWithdrawAmount('')
+    }
+
+    setWithdrawing(false)
+  }
+
+  // Handle claim daily bonus
+  const handleClaimBonus = async () => {
+    if (!user || !canClaimBonus) return
+    setClaimingBonus(true)
+
+    const supabase = createClient()
+    const streak = dailyBonus ? dailyBonus.day_streak + 1 : 1
+    const bonusAmount = Math.min(streak * 100, 5000) // 100 per day streak, max 5000
+    const newBalance = balance + bonusAmount
+
+    // Update/insert daily bonus record
+    if (dailyBonus) {
+      await supabase
+        .from('daily_bonuses')
+        .update({
+          day_streak: streak,
+          last_claimed: new Date().toISOString(),
+          bonus_amount: bonusAmount,
+        })
+        .eq('player_id', user.id)
+    } else {
+      await supabase.from('daily_bonuses').insert({
+        player_id: user.id,
+        day_streak: 1,
+        last_claimed: new Date().toISOString(),
+        bonus_amount: bonusAmount,
+      })
+    }
+
+    // Update balance
+    await supabase
+      .from('profiles')
+      .update({ balance: newBalance })
+      .eq('id', user.id)
+
+    // Record transaction
+    await supabase.from('transactions').insert({
+      player_id: user.id,
+      type: 'bonus',
+      amount: bonusAmount,
+      balance_after: newBalance,
+      description: `Daily bonus - Day ${streak} streak (${bonusAmount.toLocaleString()} credits)`,
+    })
+
+    refreshBalance()
+    await fetchTransactions()
+    await fetchDailyBonus()
+    setCanClaimBonus(false)
+    setClaimingBonus(false)
+  }
+
   return (
     <div className="min-h-screen bg-[var(--casino-bg)]">
-      {/* Header */}
       <div className="max-w-6xl mx-auto px-4 py-6">
+        {/* Header */}
         <div className="flex items-center gap-3 mb-8">
           <button
             onClick={() => router.push('/')}
@@ -108,16 +273,159 @@ export default function WalletPage() {
           className="mb-8"
         >
           <Card hover={false} glow="gold" className="text-center py-8">
-            <p className="text-sm text-[var(--casino-text-muted)] mb-2">Available Balance</p>
+            <div className="flex items-center justify-center gap-2 mb-2">
+              <Coins className="w-6 h-6 text-[var(--casino-accent)]" />
+              <p className="text-sm text-[var(--casino-text-muted)]">Available Balance</p>
+            </div>
             <h2 className="text-5xl sm:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-[#c9a227] via-[#e6c84a] to-[#c9a227] mb-6">
               ${balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
             </h2>
-            <div className="flex gap-3 justify-center">
-              <Button variant="success" size="lg" onClick={() => setShowDeposit(true)} icon={<ArrowDownCircle className="w-5 h-5" />}>
+
+            {/* Deposit/Withdraw Tabs */}
+            <div className="flex gap-2 justify-center mb-6">
+              <button
+                onClick={() => setActiveTab('deposit')}
+                className={cn(
+                  'px-6 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer flex items-center gap-2',
+                  activeTab === 'deposit'
+                    ? 'bg-gradient-to-r from-[#00cc6a] to-[#00ff88] text-black'
+                    : 'bg-[var(--casino-surface)] border border-[var(--casino-border)] text-[var(--casino-text-muted)] hover:text-white'
+                )}
+              >
+                <ArrowDownCircle className="w-4 h-4" />
                 Deposit
-              </Button>
-              <Button variant="ghost" size="lg" onClick={() => setShowWithdraw(true)} icon={<ArrowUpCircle className="w-5 h-5" />}>
+              </button>
+              <button
+                onClick={() => setActiveTab('withdraw')}
+                className={cn(
+                  'px-6 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer flex items-center gap-2',
+                  activeTab === 'withdraw'
+                    ? 'bg-gradient-to-r from-[var(--casino-accent)] to-[#e6c84a] text-black'
+                    : 'bg-[var(--casino-surface)] border border-[var(--casino-border)] text-[var(--casino-text-muted)] hover:text-white'
+                )}
+              >
+                <ArrowUpCircle className="w-4 h-4" />
                 Withdraw
+              </button>
+            </div>
+
+            {/* Tab Content */}
+            <AnimatePresence mode="wait">
+              {activeTab === 'deposit' ? (
+                <motion.div
+                  key="deposit"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="max-w-lg mx-auto"
+                >
+                  {showDepositSuccess && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="mb-4 rounded-lg border border-[#00FF88]/30 bg-[#00FF88]/10 px-4 py-2 text-sm text-[#00FF88] flex items-center justify-center gap-2"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      Credits added successfully!
+                    </motion.div>
+                  )}
+                  <p className="text-sm text-[var(--casino-text-muted)] mb-4">Select credit amount to add:</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {DEPOSIT_OPTIONS.map((amt) => (
+                      <button
+                        key={amt}
+                        onClick={() => handleDeposit(amt)}
+                        disabled={depositingAmount !== null}
+                        className="relative py-5 rounded-xl bg-[var(--casino-surface)] border border-[var(--casino-border)] hover:border-[var(--casino-accent)] hover:shadow-[0_0_15px_rgba(201,162,39,0.15)] text-white font-bold text-lg transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        {depositingAmount === amt ? (
+                          <Loader2 className="w-5 h-5 animate-spin mx-auto" />
+                        ) : (
+                          <>
+                            <span className="text-[var(--casino-accent)]">$</span>
+                            {amt.toLocaleString()}
+                          </>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="withdraw"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="max-w-sm mx-auto"
+                >
+                  <p className="text-sm text-[var(--casino-text-muted)] mb-4">
+                    Available: <span className="text-[var(--casino-accent)] font-bold">${balance.toLocaleString()}</span>
+                  </p>
+                  <input
+                    type="number"
+                    value={withdrawAmount}
+                    onChange={(e) => setWithdrawAmount(e.target.value)}
+                    placeholder="Enter amount"
+                    max={balance}
+                    className="w-full bg-[var(--casino-surface)] border border-[var(--casino-border)] rounded-xl px-4 py-3 text-white text-center text-lg font-bold focus:outline-none focus:border-[var(--casino-accent)] transition-colors mb-3"
+                  />
+                  <Button
+                    variant="primary"
+                    size="lg"
+                    className="w-full"
+                    loading={withdrawing}
+                    onClick={handleWithdraw}
+                    disabled={!withdrawAmount || parseFloat(withdrawAmount) <= 0 || parseFloat(withdrawAmount) > balance}
+                  >
+                    Withdraw
+                  </Button>
+                  <p className="text-xs text-[var(--casino-text-muted)] text-center mt-2">
+                    This is play money -- withdrawals are instant
+                  </p>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </Card>
+        </motion.div>
+
+        {/* Daily Bonus Section */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className="mb-8"
+        >
+          <Card hover={false} glow="purple">
+            <div className="flex flex-col sm:flex-row items-center gap-4">
+              <div className="flex items-center gap-3 flex-1">
+                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#8B5CF6] to-[#6d28d9] flex items-center justify-center shadow-lg">
+                  <Gift className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <h3 className="text-white font-bold">Daily Bonus</h3>
+                  <div className="flex items-center gap-2 text-xs text-[var(--casino-text-muted)]">
+                    {dailyBonus && (
+                      <>
+                        <Flame className="w-3 h-3 text-orange-400" />
+                        <span>{dailyBonus.day_streak} day streak</span>
+                        <span className="text-[var(--casino-text-muted)]">|</span>
+                      </>
+                    )}
+                    <span>
+                      Earn up to <span className="text-[var(--casino-accent)]">$5,000</span> daily
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <Button
+                variant={canClaimBonus ? 'success' : 'ghost'}
+                size="lg"
+                loading={claimingBonus}
+                disabled={!canClaimBonus}
+                onClick={handleClaimBonus}
+                icon={canClaimBonus ? <Gift className="w-5 h-5" /> : undefined}
+              >
+                {canClaimBonus ? 'Claim Daily Bonus' : 'Already Claimed Today'}
               </Button>
             </div>
           </Card>
@@ -140,7 +448,7 @@ export default function WalletPage() {
               key={stat.label}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.1 }}
+              transition={{ delay: 0.15 + i * 0.1 }}
             >
               <Card hover={false}>
                 <div className="flex items-center gap-2 mb-2">
@@ -179,58 +487,70 @@ export default function WalletPage() {
           </div>
 
           {/* Table */}
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[var(--casino-border)]">
-                  <th className="text-left py-3 px-2 text-[var(--casino-text-muted)] font-medium text-xs">Date</th>
-                  <th className="text-left py-3 px-2 text-[var(--casino-text-muted)] font-medium text-xs">Type</th>
-                  <th className="text-right py-3 px-2 text-[var(--casino-text-muted)] font-medium text-xs">Amount</th>
-                  <th className="text-right py-3 px-2 text-[var(--casino-text-muted)] font-medium text-xs hidden sm:table-cell">Balance After</th>
-                  <th className="text-left py-3 px-2 text-[var(--casino-text-muted)] font-medium text-xs hidden md:table-cell">Game</th>
-                </tr>
-              </thead>
-              <tbody>
-                <AnimatePresence mode="wait">
-                  {paginated.map((tx, i) => {
-                    const config = typeConfig[tx.type]
-                    return (
-                      <motion.tr
-                        key={tx.id}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0 }}
-                        transition={{ delay: i * 0.03 }}
-                        className="border-b border-[var(--casino-border)]/50 hover:bg-[var(--casino-surface)] transition-colors"
-                      >
-                        <td className="py-3 px-2 text-[var(--casino-text-muted)] text-xs whitespace-nowrap">
-                          {formatDate(tx.date)}
-                        </td>
-                        <td className="py-3 px-2">
-                          <span className={cn('inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium', config.bg, config.color)}>
-                            {config.icon}
-                            {config.label}
-                          </span>
-                        </td>
-                        <td className={cn(
-                          'py-3 px-2 text-right font-mono font-bold text-sm',
-                          tx.amount >= 0 ? 'text-[var(--casino-green)]' : 'text-[var(--casino-red)]'
-                        )}>
-                          {tx.amount >= 0 ? '+' : ''}{tx.amount < 0 ? '-' : ''}${Math.abs(tx.amount).toLocaleString()}
-                        </td>
-                        <td className="py-3 px-2 text-right text-[var(--casino-text-muted)] font-mono text-xs hidden sm:table-cell">
-                          ${tx.balanceAfter.toLocaleString()}
-                        </td>
-                        <td className="py-3 px-2 text-[var(--casino-text-muted)] text-xs hidden md:table-cell">
-                          {tx.game || '-'}
-                        </td>
-                      </motion.tr>
-                    )
-                  })}
-                </AnimatePresence>
-              </tbody>
-            </table>
-          </div>
+          {txLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-6 h-6 animate-spin text-[var(--casino-accent)]" />
+            </div>
+          ) : transactions.length === 0 ? (
+            <div className="text-center py-12">
+              <Wallet className="w-10 h-10 mx-auto mb-3 text-zinc-700" />
+              <p className="text-sm text-[var(--casino-text-muted)]">No transactions yet</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[var(--casino-border)]">
+                    <th className="text-left py-3 px-2 text-[var(--casino-text-muted)] font-medium text-xs">Date</th>
+                    <th className="text-left py-3 px-2 text-[var(--casino-text-muted)] font-medium text-xs">Type</th>
+                    <th className="text-left py-3 px-2 text-[var(--casino-text-muted)] font-medium text-xs hidden md:table-cell">Description</th>
+                    <th className="text-right py-3 px-2 text-[var(--casino-text-muted)] font-medium text-xs">Amount</th>
+                    <th className="text-right py-3 px-2 text-[var(--casino-text-muted)] font-medium text-xs hidden sm:table-cell">Balance After</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <AnimatePresence mode="wait">
+                    {paginated.map((tx, i) => {
+                      const config = typeConfig[tx.type]
+                      const isPositive = tx.type === 'win' || tx.type === 'deposit' || tx.type === 'bonus'
+                      return (
+                        <motion.tr
+                          key={tx.id}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0 }}
+                          transition={{ delay: i * 0.03 }}
+                          className="border-b border-[var(--casino-border)]/50 hover:bg-[var(--casino-surface)] transition-colors"
+                        >
+                          <td className="py-3 px-2 text-[var(--casino-text-muted)] text-xs whitespace-nowrap">
+                            {formatDate(tx.created_at)}
+                          </td>
+                          <td className="py-3 px-2">
+                            <span className={cn('inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium', config.bg, config.color)}>
+                              {config.icon}
+                              {config.label}
+                            </span>
+                          </td>
+                          <td className="py-3 px-2 text-[var(--casino-text-muted)] text-xs hidden md:table-cell max-w-[200px] truncate">
+                            {tx.description || '-'}
+                          </td>
+                          <td className={cn(
+                            'py-3 px-2 text-right font-mono font-bold text-sm',
+                            isPositive ? 'text-[var(--casino-green)]' : 'text-[var(--casino-red)]'
+                          )}>
+                            {isPositive ? '+' : '-'}${Math.abs(tx.amount).toLocaleString()}
+                          </td>
+                          <td className="py-3 px-2 text-right text-[var(--casino-text-muted)] font-mono text-xs hidden sm:table-cell">
+                            ${tx.balance_after.toLocaleString()}
+                          </td>
+                        </motion.tr>
+                      )
+                    })}
+                  </AnimatePresence>
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {/* Pagination */}
           {totalPages > 1 && (
@@ -258,51 +578,6 @@ export default function WalletPage() {
           )}
         </Card>
       </div>
-
-      {/* Deposit Modal */}
-      <Modal open={showDeposit} onClose={() => setShowDeposit(false)} title="Deposit Funds">
-        <div className="space-y-4">
-          <p className="text-sm text-[var(--casino-text-muted)]">Choose deposit amount:</p>
-          <div className="grid grid-cols-2 gap-3">
-            {[1000, 5000, 10000, 25000].map((amt) => (
-              <button
-                key={amt}
-                className="py-4 rounded-xl bg-[var(--casino-surface)] border border-[var(--casino-border)] hover:border-[var(--casino-accent)] text-white font-bold text-lg transition-all cursor-pointer"
-              >
-                ${amt.toLocaleString()}
-              </button>
-            ))}
-          </div>
-          <input
-            type="number"
-            placeholder="Custom amount"
-            className="w-full bg-[var(--casino-surface)] border border-[var(--casino-border)] rounded-xl px-4 py-3 text-white focus:outline-none focus:border-[var(--casino-accent)] transition-colors"
-          />
-          <Button variant="success" size="lg" className="w-full">
-            Deposit
-          </Button>
-        </div>
-      </Modal>
-
-      {/* Withdraw Modal */}
-      <Modal open={showWithdraw} onClose={() => setShowWithdraw(false)} title="Withdraw Funds">
-        <div className="space-y-4">
-          <p className="text-sm text-[var(--casino-text-muted)]">
-            Available: <span className="text-[var(--casino-accent)] font-bold">${balance.toLocaleString()}</span>
-          </p>
-          <input
-            type="number"
-            placeholder="Withdrawal amount"
-            className="w-full bg-[var(--casino-surface)] border border-[var(--casino-border)] rounded-xl px-4 py-3 text-white focus:outline-none focus:border-[var(--casino-accent)] transition-colors"
-          />
-          <Button variant="primary" size="lg" className="w-full">
-            Withdraw
-          </Button>
-          <p className="text-xs text-[var(--casino-text-muted)] text-center">
-            Withdrawals are processed within 24 hours
-          </p>
-        </div>
-      </Modal>
     </div>
   )
 }
