@@ -4,9 +4,18 @@ import type { PlinkoResult } from '@/lib/types'
 // Multipliers for 16 rows (17 buckets)
 // ---------------------------------------------------------------------------
 
-export const PLINKO_MULTIPLIERS: number[] = [
-  110, 41, 10, 5, 3, 1.5, 1, 0.5, 0.3, 0.5, 1, 1.5, 3, 5, 10, 41, 110,
-]
+// Center-weighted multipliers from Solana contract
+// Formula: max(1, 1000 - (distance * 500 / maxDistance))
+// 17 buckets for 16 rows, center (bucket 8) = 1000x, edges = 1x
+export const PLINKO_MULTIPLIERS: number[] = (() => {
+  const buckets = 17
+  const center = Math.floor(buckets / 2) // 8
+  const maxDistance = center // 8
+  return Array.from({ length: buckets }, (_, i) => {
+    const distance = Math.abs(i - center)
+    return Math.max(1, Math.round(1000 - (distance * 500 / maxDistance)))
+  })
+})()
 
 export const PLINKO_ROWS = 16
 

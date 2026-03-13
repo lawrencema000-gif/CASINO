@@ -5,12 +5,12 @@ import type { SlotSymbol, SlotResult } from '@/lib/types'
 // ---------------------------------------------------------------------------
 
 export const SYMBOLS: SlotSymbol[] = [
-  { id: 'seven', name: 'Seven', emoji: '7\uFE0F\u20E3', multiplier: 50, weight: 2 },
-  { id: 'diamond', name: 'Diamond', emoji: '\uD83D\uDC8E', multiplier: 25, weight: 3 },
-  { id: 'bell', name: 'Bell', emoji: '\uD83D\uDD14', multiplier: 15, weight: 5 },
-  { id: 'cherry', name: 'Cherry', emoji: '\uD83C\uDF52', multiplier: 10, weight: 8 },
-  { id: 'lemon', name: 'Lemon', emoji: '\uD83C\uDF4B', multiplier: 5, weight: 12 },
-  { id: 'orange', name: 'Orange', emoji: '\uD83C\uDF4A', multiplier: 3, weight: 15 },
+  { id: 'seven', name: 'Seven', emoji: '7\uFE0F\u20E3', multiplier: 25, weight: 2 },
+  { id: 'diamond', name: 'Diamond', emoji: '\uD83D\uDC8E', multiplier: 15, weight: 3 },
+  { id: 'bell', name: 'Bell', emoji: '\uD83D\uDD14', multiplier: 10, weight: 5 },
+  { id: 'cherry', name: 'Cherry', emoji: '\uD83C\uDF52', multiplier: 5, weight: 8 },
+  { id: 'lemon', name: 'Lemon', emoji: '\uD83C\uDF4B', multiplier: 3, weight: 12 },
+  { id: 'orange', name: 'Orange', emoji: '\uD83C\uDF4A', multiplier: 2, weight: 15 },
   { id: 'grape', name: 'Grape', emoji: '\uD83C\uDF47', multiplier: 2, weight: 20 },
   { id: 'star', name: 'Star', emoji: '\u2B50', multiplier: 0, weight: 5 },
 ]
@@ -110,6 +110,21 @@ export function spin(bet: number, rngValue: number): SlotResult {
 
         if (baseSymbol === 'seven') {
           isJackpot = true
+        }
+      }
+    } else {
+      // Check for any two of a kind (Solana contract: 1x return bet)
+      const nonWildSymbols = lineSymbols.filter((s) => s !== 'star')
+      if (nonWildSymbols.length >= 2) {
+        const counts: Record<string, number> = {}
+        for (const s of nonWildSymbols) {
+          counts[s] = (counts[s] || 0) + 1
+        }
+        const hasPair = Object.values(counts).some((c) => c >= 2)
+        if (hasPair) {
+          const payout = bet * 1 // 1x return bet
+          totalPayout += payout
+          paylineResults.push({ line: lineIdx, symbols: lineSymbols, payout })
         }
       }
     }

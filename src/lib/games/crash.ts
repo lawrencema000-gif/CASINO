@@ -1,6 +1,12 @@
 import type { CrashState } from '@/lib/types'
 
 // ---------------------------------------------------------------------------
+// House edge (2.5% = 250 basis points, matching Solana contract)
+// ---------------------------------------------------------------------------
+
+export const HOUSE_EDGE_BPS = 250
+
+// ---------------------------------------------------------------------------
 // Crash point generation
 // ---------------------------------------------------------------------------
 
@@ -77,11 +83,14 @@ export function cashOut(state: CrashState): CrashState {
 
 /**
  * Calculate payout for a crash game.
+ * House edge is applied to payouts (not crash point), matching Solana contract.
+ * Payout = bet * multiplier * (1 - houseEdge)
  */
 export function calculateCrashPayout(
   bet: number,
   state: CrashState
 ): number {
   if (!state.cashedOut || state.cashOutMultiplier === null) return 0
-  return Math.floor(bet * state.cashOutMultiplier * 100) / 100
+  const houseEdge = HOUSE_EDGE_BPS / 10000
+  return Math.floor(bet * state.cashOutMultiplier * (1 - houseEdge) * 100) / 100
 }

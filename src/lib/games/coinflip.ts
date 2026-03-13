@@ -1,7 +1,7 @@
 export type CoinSide = 'heads' | 'tails'
 
-/** Payout multiplier: 1.98x (1% house edge) */
-export const COINFLIP_MULTIPLIER = 1.98
+/** Payout multiplier: 1.95x (2.5% house edge) */
+export const COINFLIP_MULTIPLIER = 1.95
 
 /**
  * Flip a coin using a provably fair RNG value (0-1).
