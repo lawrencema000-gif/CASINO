@@ -303,3 +303,30 @@ CREATE TRIGGER update_player_level
 -- ============================================
 ALTER PUBLICATION supabase_realtime ADD TABLE public.profiles;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.jackpots;
+
+-- ============================================
+-- 11. FAVORITES TABLE
+-- ============================================
+CREATE TABLE IF NOT EXISTS public.favorites (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  game_slug TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(user_id, game_slug)
+);
+
+ALTER TABLE public.favorites ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can view own favorites" ON public.favorites
+  FOR SELECT USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can insert own favorites" ON public.favorites
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete own favorites" ON public.favorites
+  FOR DELETE USING (auth.uid() = user_id);
+
+CREATE POLICY "Service role full access favorites" ON public.favorites
+  FOR ALL USING (auth.role() = 'service_role');
+
+CREATE INDEX idx_favorites_user_id ON public.favorites(user_id);
