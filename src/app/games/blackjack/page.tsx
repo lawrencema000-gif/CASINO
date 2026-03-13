@@ -24,19 +24,18 @@ import Card from "@/components/ui/Card";
 import { cn } from "@/components/ui/cn";
 import Link from "next/link";
 
+/* ─── card image helpers ─── */
+function getCardImage(card: { suit: string; rank: string }): string {
+  const suitMap: Record<string, number> = { 'clubs': 1, 'diamonds': 2, 'hearts': 3, 'spades': 4 }
+  const rankMap: Record<string, number> = { 'A': 14, 'K': 13, 'Q': 12, 'J': 11, '10': 10, '9': 9, '8': 8, '7': 7, '6': 6, '5': 5, '4': 4, '3': 3, '2': 2 }
+  const s = suitMap[card.suit] || 1
+  const r = rankMap[card.rank] || 2
+  return `/images/cards/${s}_${r}.png`
+}
+const CARD_BACK = '/images/cards/0_0.png'
+
 /* ─── types ─── */
 type GamePhase = "betting" | "dealing" | "playing" | "dealer" | "settled";
-
-const SUIT_SYMBOLS: Record<string, string> = {
-  hearts: "\u2665",
-  diamonds: "\u2666",
-  clubs: "\u2663",
-  spades: "\u2660",
-};
-
-function isRedSuit(suit: string) {
-  return suit === "hearts" || suit === "diamonds";
-}
 
 /* ─── playing card component ─── */
 function PlayingCard({
@@ -50,53 +49,51 @@ function PlayingCard({
   index?: number;
   animated?: boolean;
 }) {
-  const red = isRedSuit(card.suit);
-
-  if (faceDown) {
-    return (
-      <motion.div
-        initial={animated ? { x: 200, y: -100, opacity: 0, rotateY: 180 } : false}
-        animate={{ x: 0, y: 0, opacity: 1, rotateY: 0 }}
-        transition={{ delay: index * 0.15, duration: 0.4, type: "spring" }}
-        className="w-16 h-24 md:w-20 md:h-28 rounded-xl border-2 border-gray-600 bg-gradient-to-br from-blue-900 via-blue-800 to-indigo-900 shadow-lg flex items-center justify-center flex-shrink-0"
-      >
-        <div className="w-10 h-16 md:w-12 md:h-18 rounded border border-blue-500/30 bg-blue-950/50 flex items-center justify-center">
-          <span className="text-blue-400/50 text-lg font-bold">?</span>
-        </div>
-      </motion.div>
-    );
-  }
+  const [hasDealt, setHasDealt] = useState(false);
 
   return (
     <motion.div
       initial={animated ? { x: 200, y: -100, opacity: 0 } : false}
       animate={{ x: 0, y: 0, opacity: 1 }}
       transition={{ delay: index * 0.15, duration: 0.4, type: "spring" }}
-      className={cn(
-        "w-16 h-24 md:w-20 md:h-28 rounded-xl border-2 shadow-lg flex flex-col items-center justify-between p-1.5 md:p-2 flex-shrink-0",
-        "bg-gradient-to-br from-white to-gray-100",
-        red ? "border-red-300" : "border-gray-300"
-      )}
+      onAnimationComplete={() => setHasDealt(true)}
+      className="flex-shrink-0"
+      style={{ perspective: "800px" }}
     >
-      <div className="self-start">
-        <p className={cn("text-sm md:text-base font-bold leading-none", red ? "text-red-600" : "text-gray-900")}>
-          {card.rank}
-        </p>
-        <p className={cn("text-xs md:text-sm leading-none", red ? "text-red-500" : "text-gray-700")}>
-          {SUIT_SYMBOLS[card.suit]}
-        </p>
-      </div>
-      <p className={cn("text-2xl md:text-3xl", red ? "text-red-500" : "text-gray-800")}>
-        {SUIT_SYMBOLS[card.suit]}
-      </p>
-      <div className="self-end rotate-180">
-        <p className={cn("text-sm md:text-base font-bold leading-none", red ? "text-red-600" : "text-gray-900")}>
-          {card.rank}
-        </p>
-        <p className={cn("text-xs md:text-sm leading-none", red ? "text-red-500" : "text-gray-700")}>
-          {SUIT_SYMBOLS[card.suit]}
-        </p>
-      </div>
+      <motion.div
+        initial={{ rotateY: 180 }}
+        animate={{ rotateY: faceDown ? 180 : 0 }}
+        transition={{ duration: 0.5, delay: animated && !hasDealt ? index * 0.15 + 0.3 : 0 }}
+        style={{ transformStyle: "preserve-3d" }}
+        className="relative w-[69px] h-[93px] md:w-20 md:h-28"
+      >
+        {/* Front face */}
+        <div
+          className="absolute inset-0 rounded-lg shadow-lg border border-gray-700 overflow-hidden"
+          style={{ backfaceVisibility: "hidden" }}
+        >
+          <img
+            src={getCardImage(card)}
+            alt={`${card.rank} of ${card.suit}`}
+            className="w-full h-full object-cover"
+            style={{ imageRendering: "auto" }}
+            draggable={false}
+          />
+        </div>
+        {/* Back face */}
+        <div
+          className="absolute inset-0 rounded-lg shadow-lg border border-gray-700 overflow-hidden"
+          style={{ backfaceVisibility: "hidden", transform: "rotateY(180deg)" }}
+        >
+          <img
+            src={CARD_BACK}
+            alt="Card back"
+            className="w-full h-full object-cover"
+            style={{ imageRendering: "auto" }}
+            draggable={false}
+          />
+        </div>
+      </motion.div>
     </motion.div>
   );
 }
@@ -377,7 +374,12 @@ export default function BlackjackPage() {
 
         {/* table */}
         <div className="relative rounded-3xl overflow-hidden border border-emerald-800/50">
-          <div className="bg-gradient-to-b from-emerald-900 via-emerald-950 to-emerald-900 p-4 md:p-8 min-h-[420px] flex flex-col justify-between">
+          <div
+            className="bg-gradient-to-b from-emerald-900 via-emerald-950 to-emerald-900 p-4 md:p-8 min-h-[420px] flex flex-col justify-between"
+            style={{
+              backgroundImage: `url("data:image/svg+xml,%3Csvg width='40' height='40' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E"), linear-gradient(to bottom, rgb(6 78 59), rgb(6 58 39), rgb(6 78 59))`,
+            }}
+          >
             {/* dealer area */}
             <div className="space-y-2">
               <HandValue hand={showDealerHole ? dealerHand : dealerHand ? { ...dealerHand, value: dealerHand.cards[0].value, isSoft: false, isBust: false, isBlackjack: false, cards: [dealerHand.cards[0]] } : null} label="Dealer" />

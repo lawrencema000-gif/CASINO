@@ -8,14 +8,17 @@ import BetControls from '@/components/ui/BetControls'
 import { HAND_RANKINGS, createFullDeck, deal, evaluateHand, redraw } from '@/lib/games/poker'
 import type { BlackjackCard } from '@/lib/types'
 
-type Phase = 'betting' | 'dealt' | 'drawn' | 'result'
+/* ─── card image helpers ─── */
+function getCardImage(card: { suit: string; rank: string }): string {
+  const suitMap: Record<string, number> = { 'clubs': 1, 'diamonds': 2, 'hearts': 3, 'spades': 4 }
+  const rankMap: Record<string, number> = { 'A': 14, 'K': 13, 'Q': 12, 'J': 11, '10': 10, '9': 9, '8': 8, '7': 7, '6': 6, '5': 5, '4': 4, '3': 3, '2': 2 }
+  const s = suitMap[card.suit] || 1
+  const r = rankMap[card.rank] || 2
+  return `/images/cards/${s}_${r}.png`
+}
+const CARD_BACK = '/images/cards/0_0.png'
 
-const SUIT_SYMBOL: Record<string, string> = {
-  hearts: '\u2665', diamonds: '\u2666', clubs: '\u2663', spades: '\u2660',
-}
-const SUIT_COLOR: Record<string, string> = {
-  hearts: 'text-red-500', diamonds: 'text-red-500', clubs: 'text-white', spades: 'text-white',
-}
+type Phase = 'betting' | 'dealt' | 'drawn' | 'result'
 
 function CardVisual({
   card,
@@ -38,45 +41,49 @@ function CardVisual({
 
   return (
     <motion.div
-      initial={{ rotateY: 180, scale: 0.8, opacity: 0 }}
-      animate={{ rotateY: faceUp ? 0 : 180, scale: 1, opacity: 1 }}
-      transition={{ duration: 0.5, delay }}
-      style={{ perspective: '600px' }}
       onClick={onClick}
       className={`relative cursor-pointer select-none transition-transform ${held ? '-translate-y-3' : ''}`}
+      style={{ perspective: '800px' }}
     >
-      <div
-        className={`w-16 h-24 sm:w-20 sm:h-28 md:w-24 md:h-36 rounded-xl overflow-hidden relative transition-shadow duration-300 ${
-          held ? 'shadow-[0_0_15px_rgba(255,215,0,0.4)] ring-2 ring-[#FFD700]' : 'shadow-lg'
-        }`}
+      <motion.div
+        initial={{ rotateY: 180, scale: 0.8, opacity: 0 }}
+        animate={{ rotateY: faceUp ? 0 : 180, scale: 1, opacity: 1 }}
+        transition={{ duration: 0.5, delay }}
         style={{ transformStyle: 'preserve-3d' }}
+        className={`relative w-16 h-24 sm:w-20 sm:h-28 md:w-24 md:h-36 transition-shadow duration-300 ${
+          held ? 'shadow-[0_0_15px_rgba(255,215,0,0.4)]' : ''
+        }`}
       >
-        {/* Front */}
+        {/* Front face - card image */}
         <div
-          className="absolute inset-0 bg-white rounded-xl flex flex-col items-center justify-between p-1.5 sm:p-2"
+          className={`absolute inset-0 rounded-lg overflow-hidden border-2 ${
+            held ? 'border-[#FFD700] shadow-[0_0_20px_rgba(255,215,0,0.5)]' : 'border-gray-700'
+          }`}
           style={{ backfaceVisibility: 'hidden' }}
         >
-          <div className={`self-start text-xs sm:text-sm font-bold leading-tight ${SUIT_COLOR[card.suit]}`}>
-            {card.rank}
-            <div className="text-[10px] sm:text-xs">{SUIT_SYMBOL[card.suit]}</div>
-          </div>
-          <div className={`text-2xl sm:text-4xl ${SUIT_COLOR[card.suit]}`}>
-            {SUIT_SYMBOL[card.suit]}
-          </div>
-          <div className={`self-end rotate-180 text-xs sm:text-sm font-bold leading-tight ${SUIT_COLOR[card.suit]}`}>
-            {card.rank}
-            <div className="text-[10px] sm:text-xs">{SUIT_SYMBOL[card.suit]}</div>
-          </div>
+          <img
+            src={getCardImage(card)}
+            alt={`${card.rank} of ${card.suit}`}
+            className="w-full h-full object-cover"
+            style={{ imageRendering: 'auto' }}
+            draggable={false}
+          />
         </div>
 
-        {/* Back */}
+        {/* Back face - card back image */}
         <div
-          className="absolute inset-0 rounded-xl bg-gradient-to-br from-[#1a1a6e] via-[#2d1b69] to-[#1a1a6e] border-2 border-[#3d2b89] flex items-center justify-center"
+          className="absolute inset-0 rounded-lg overflow-hidden border-2 border-gray-700"
           style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
         >
-          <div className="w-[80%] h-[85%] rounded-lg border border-[#4a3a99] bg-[#2a1a5e]" />
+          <img
+            src={CARD_BACK}
+            alt="Card back"
+            className="w-full h-full object-cover"
+            style={{ imageRendering: 'auto' }}
+            draggable={false}
+          />
         </div>
-      </div>
+      </motion.div>
 
       {/* HELD badge */}
       {held && (
