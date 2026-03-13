@@ -1,15 +1,19 @@
 'use client'
 
-import { useState, FormEvent, Suspense } from 'react'
+import { useState, useEffect, FormEvent, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
-import { Crown, Mail, Lock, Loader2, Dices } from 'lucide-react'
+import { Crown, Mail, Lock, Loader2, Dices, Eye, EyeOff } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+
+const SAVED_EMAIL_KEY = 'fortuna_saved_email'
 
 function LoginForm() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [rememberMe, setRememberMe] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -17,32 +21,56 @@ function LoginForm() {
   const searchParams = useSearchParams()
   const redirectTo = searchParams.get('redirectTo') || '/'
 
+  // On mount: check localStorage for saved email
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(SAVED_EMAIL_KEY)
+      if (saved) {
+        setEmail(saved)
+        setRememberMe(true)
+      }
+    }
+  }, [])
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
     setError(null)
     setLoading(true)
 
-    const supabase = createClient()
+    try {
+      const supabase = createClient()
 
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
 
-    if (signInError) {
-      setError(signInError.message)
+      if (signInError) {
+        setError(signInError.message)
+        setLoading(false)
+        return
+      }
+
+      // Handle remember me
+      if (typeof window !== 'undefined') {
+        if (rememberMe) {
+          localStorage.setItem(SAVED_EMAIL_KEY, email)
+        } else {
+          localStorage.removeItem(SAVED_EMAIL_KEY)
+        }
+      }
+
+      router.push(redirectTo)
+      router.refresh()
+    } catch {
+      setError('An unexpected error occurred. Please try again.')
       setLoading(false)
-      return
     }
-
-    router.push(redirectTo)
-    router.refresh()
   }
 
   const handleGuestMode = () => {
-    // Set demo mode flag in localStorage and redirect to lobby
     if (typeof window !== 'undefined') {
-      localStorage.setItem('casino_demo_mode', 'true')
+      localStorage.setItem('demo_mode', 'true')
     }
     router.push('/')
   }
@@ -112,7 +140,7 @@ function LoginForm() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
-            className="w-full rounded-lg border border-[#333] bg-[#111118] px-4 py-2.5 text-white placeholder-zinc-500 outline-none transition-colors focus:border-[#FFD700] focus:ring-1 focus:ring-[#FFD700]/25"
+            className="w-full rounded-lg border border-[#333] bg-[#111118] px-4 py-2.5 text-white placeholder-gray-500 outline-none transition-colors focus:border-[#FFD700] focus:ring-1 focus:ring-[#FFD700]/25"
           />
         </div>
 
@@ -125,22 +153,47 @@ function LoginForm() {
             <Lock className="h-3.5 w-3.5" />
             Password
           </label>
-          <input
-            id="password"
-            type="password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Enter your password"
-            className="w-full rounded-lg border border-[#333] bg-[#111118] px-4 py-2.5 text-white placeholder-zinc-500 outline-none transition-colors focus:border-[#FFD700] focus:ring-1 focus:ring-[#FFD700]/25"
-          />
+          <div className="relative">
+            <input
+              id="password"
+              type={showPassword ? 'text' : 'password'}
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Enter your password"
+              className="w-full rounded-lg border border-[#333] bg-[#111118] px-4 py-2.5 pr-10 text-white placeholder-gray-500 outline-none transition-colors focus:border-[#FFD700] focus:ring-1 focus:ring-[#FFD700]/25"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 transition-colors hover:text-zinc-300"
+              tabIndex={-1}
+            >
+              {showPassword ? (
+                <EyeOff className="h-4 w-4" />
+              ) : (
+                <Eye className="h-4 w-4" />
+              )}
+            </button>
+          </div>
         </div>
+
+        {/* Remember Me */}
+        <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-400">
+          <input
+            type="checkbox"
+            checked={rememberMe}
+            onChange={(e) => setRememberMe(e.target.checked)}
+            className="h-4 w-4 rounded border-zinc-600 bg-[#111118] accent-[#FFD700] focus:ring-[#FFD700]/25"
+          />
+          <span>Remember me</span>
+        </label>
 
         {/* Sign In Button */}
         <button
           type="submit"
           disabled={loading}
-          className="w-full rounded-lg bg-gradient-to-r from-[#c9a227] via-[#FFD700] to-[#e6c84a] px-4 py-2.5 font-bold text-black transition-all hover:shadow-[0_0_25px_rgba(255,215,0,0.3)] disabled:cursor-not-allowed disabled:opacity-50"
+          className="w-full rounded-lg bg-gradient-to-r from-[#c9a227] via-[#FFD700] to-[#e6c84a] px-4 py-2.5 font-bold uppercase tracking-wide text-black transition-all hover:shadow-[0_0_25px_rgba(255,215,0,0.3)] disabled:cursor-not-allowed disabled:opacity-50"
         >
           {loading ? (
             <span className="flex items-center justify-center gap-2">
@@ -148,7 +201,7 @@ function LoginForm() {
               Signing in...
             </span>
           ) : (
-            'Sign In'
+            'SIGN IN'
           )}
         </button>
       </form>
