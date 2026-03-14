@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { supabaseAdmin } from '@/lib/supabase/admin'
+import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 
 export async function GET() {
   try {
@@ -69,6 +70,15 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { error: 'Not authenticated' },
         { status: 401 }
+      )
+    }
+
+    // Rate limit bonus claims
+    const limit = checkRateLimit(`bonus:${user.id}`, RATE_LIMITS.bonus)
+    if (!limit.allowed) {
+      return NextResponse.json(
+        { error: 'Rate limit exceeded. Try again later.' },
+        { status: 429 }
       )
     }
 

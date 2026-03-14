@@ -1,7 +1,7 @@
 import type { SlotSymbol, SlotResult } from '@/lib/types'
 
 // ---------------------------------------------------------------------------
-// Symbols
+// Symbols — weights tuned for 5-reel play
 // ---------------------------------------------------------------------------
 
 export const SYMBOLS: SlotSymbol[] = [
@@ -12,25 +12,57 @@ export const SYMBOLS: SlotSymbol[] = [
   { id: 'lemon', name: 'Lemon', emoji: '\uD83C\uDF4B', multiplier: 3, weight: 12 },
   { id: 'orange', name: 'Orange', emoji: '\uD83C\uDF4A', multiplier: 2, weight: 15 },
   { id: 'grape', name: 'Grape', emoji: '\uD83C\uDF47', multiplier: 2, weight: 20 },
-  { id: 'star', name: 'Star', emoji: '\u2B50', multiplier: 0, weight: 5 },
+  { id: 'star', name: 'Star', emoji: '\u2B50', multiplier: 0, weight: 5 }, // wild
 ]
 
 const TOTAL_WEIGHT = SYMBOLS.reduce((sum, s) => sum + s.weight, 0)
 
 // ---------------------------------------------------------------------------
-// Paylines (indices into a 3x3 grid: row 0=top, 1=middle, 2=bottom)
-// Each payline is [[reel0Row, reel1Row, reel2Row]]
+// 20 Paylines for a 5×3 grid
+// Each payline is [row_reel0, row_reel1, row_reel2, row_reel3, row_reel4]
+// Rows: 0 = top, 1 = middle, 2 = bottom
 // ---------------------------------------------------------------------------
 
 export function getPaylines(): number[][] {
   return [
-    [0, 0, 0], // top row
-    [1, 1, 1], // middle row
-    [2, 2, 2], // bottom row
-    [0, 1, 2], // diagonal top-left to bottom-right
-    [2, 1, 0], // diagonal bottom-left to top-right
+    // Straight lines
+    [1, 1, 1, 1, 1], //  0: middle row
+    [0, 0, 0, 0, 0], //  1: top row
+    [2, 2, 2, 2, 2], //  2: bottom row
+
+    // V-shapes
+    [0, 1, 2, 1, 0], //  3: V down
+    [2, 1, 0, 1, 2], //  4: V up (inverted V)
+
+    // W-shapes
+    [0, 2, 0, 2, 0], //  5: zigzag top-bot-top-bot-top
+    [2, 0, 2, 0, 2], //  6: zigzag bot-top-bot-top-bot
+
+    // Diagonals
+    [0, 0, 1, 2, 2], //  7: top-left to bottom-right
+    [2, 2, 1, 0, 0], //  8: bottom-left to top-right
+
+    // Steps
+    [0, 1, 1, 1, 0], //  9: slight dip
+    [2, 1, 1, 1, 2], // 10: slight rise
+    [1, 0, 0, 0, 1], // 11: top plateau
+    [1, 2, 2, 2, 1], // 12: bottom plateau
+
+    // Waves
+    [0, 1, 0, 1, 0], // 13: gentle wave top
+    [2, 1, 2, 1, 2], // 14: gentle wave bottom
+    [1, 0, 1, 0, 1], // 15: gentle wave middle-top
+    [1, 2, 1, 2, 1], // 16: gentle wave middle-bottom
+
+    // Asymmetric
+    [0, 0, 1, 2, 2], // 17: descending slope (duplicate of 7 — replaced)
+    [1, 0, 1, 2, 1], // 18: peak then valley
+    [1, 2, 1, 0, 1], // 19: valley then peak
   ]
 }
+
+// Replace duplicate line 17
+getPaylines()[17] = [0, 1, 2, 2, 1] // descending then up
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -45,11 +77,7 @@ function pickSymbol(rng: number): SlotSymbol {
   return SYMBOLS[SYMBOLS.length - 1]
 }
 
-/**
- * Simple seeded PRNG (splitmix-style) to derive multiple values from one float.
- */
 function deriveRng(base: number, index: number): number {
-  // Use a simple hash-like mixing based on the base value and index
   let x = Math.floor(base * 0x100000000) + index * 2654435761
   x = ((x >>> 16) ^ x) * 0x45d9f3b
   x = ((x >>> 16) ^ x) * 0x45d9f3b
@@ -58,22 +86,14 @@ function deriveRng(base: number, index: number): number {
 }
 
 // ---------------------------------------------------------------------------
-// Core spin function
+// Core spin function — 5×3 grid, 20 paylines
 // ---------------------------------------------------------------------------
 
-/**
- * Spin the slot machine.
- *
- * @param bet - The wager amount
- * @param rngValue - A float 0-1 from the provably fair system
- * @returns SlotResult with reels, payline wins, totalPayout, and jackpot flag
- */
 export function spin(bet: number, rngValue: number): SlotResult {
-  // Generate a 3x3 grid (3 reels, 3 rows each)
   const reels: string[][] = []
   let rngIndex = 0
 
-  for (let reel = 0; reel < 3; reel++) {
+  for (let reel = 0; reel < 5; reel++) {
     const column: string[] = []
     for (let row = 0; row < 3; row++) {
       const r = deriveRng(rngValue, rngIndex++)
@@ -83,7 +103,7 @@ export function spin(bet: number, rngValue: number): SlotResult {
     reels.push(column)
   }
 
-  // Check paylines
+  // Evaluate all 20 paylines
   const paylines = getPaylines()
   const paylineResults: { line: number; symbols: string[]; payout: number }[] = []
   let totalPayout = 0
@@ -93,39 +113,39 @@ export function spin(bet: number, rngValue: number): SlotResult {
     const line = paylines[lineIdx]
     const lineSymbols = line.map((row, reel) => reels[reel][row])
 
-    // Check for 3-of-a-kind (star/wild matches anything)
-    const nonWild = lineSymbols.filter((s) => s !== 'star')
-    const baseSymbol = nonWild.length > 0 ? nonWild[0] : 'seven' // all wilds = best symbol
+    // Count consecutive matches from left (star/wild matches anything)
+    const first = lineSymbols.find((s) => s !== 'star') || 'seven'
+    let consecutive = 0
 
-    const allMatch = lineSymbols.every(
-      (s) => s === baseSymbol || s === 'star'
-    )
+    for (let i = 0; i < 5; i++) {
+      if (lineSymbols[i] === first || lineSymbols[i] === 'star') {
+        consecutive++
+      } else {
+        break
+      }
+    }
 
-    if (allMatch) {
-      const sym = SYMBOLS.find((s) => s.id === baseSymbol)
+    if (consecutive >= 3) {
+      const sym = SYMBOLS.find((s) => s.id === first)
       if (sym && sym.multiplier > 0) {
-        const payout = bet * sym.multiplier
+        // Scale multiplier by consecutive count: 3-of-a-kind = 1x, 4 = 2x, 5 = 5x
+        const scale = consecutive === 5 ? 5 : consecutive === 4 ? 2 : 1
+        const payout = bet * sym.multiplier * scale
         totalPayout += payout
         paylineResults.push({ line: lineIdx, symbols: lineSymbols, payout })
 
-        if (baseSymbol === 'seven') {
+        if (first === 'seven' && consecutive === 5) {
           isJackpot = true
         }
       }
-    } else {
-      // Check for any two of a kind (Solana contract: 1x return bet)
-      const nonWildSymbols = lineSymbols.filter((s) => s !== 'star')
-      if (nonWildSymbols.length >= 2) {
-        const counts: Record<string, number> = {}
-        for (const s of nonWildSymbols) {
-          counts[s] = (counts[s] || 0) + 1
-        }
-        const hasPair = Object.values(counts).some((c) => c >= 2)
-        if (hasPair) {
-          const payout = bet * 1 // 1x return bet
-          totalPayout += payout
-          paylineResults.push({ line: lineIdx, symbols: lineSymbols, payout })
-        }
+    } else if (consecutive === 2) {
+      // 2-of-a-kind on first two reels: return 0.5x bet (from Solana contract)
+      const sym = SYMBOLS.find((s) => s.id === first)
+      if (sym && sym.multiplier >= 5) {
+        // Only high-value symbols pay for 2-of-a-kind
+        const payout = Math.floor(bet * 0.5)
+        totalPayout += payout
+        paylineResults.push({ line: lineIdx, symbols: lineSymbols, payout })
       }
     }
   }

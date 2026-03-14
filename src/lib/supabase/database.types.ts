@@ -11,9 +11,13 @@ export type GameType =
   | "slots"
   | "roulette"
   | "dice"
-  | "mines"
+  | "coinflip"
   | "crash"
   | "plinko"
+  | "poker"
+  | "lottery"
+  | "jackpot"
+  | "mines"
   | "keno"
   | "limbo"
   | "hilo";
@@ -23,7 +27,8 @@ export type TransactionType =
   | "withdrawal"
   | "bet"
   | "win"
-  | "bonus";
+  | "bonus"
+  | "refund";
 
 export type VipTier =
   | "bronze"

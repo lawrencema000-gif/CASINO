@@ -103,6 +103,42 @@ const GAME_CONFIGS: Record<string, GameConfig> = {
     description: "Guess if the next card is higher or lower.",
     maxMultiplier: 1.96,
   },
+  coinflip: {
+    name: "Coin Flip",
+    slug: "coinflip",
+    minBet: 10,
+    maxBet: 1000000,
+    houseEdge: 0.025,
+    description: "Pick heads or tails. 1.95x payout.",
+    maxMultiplier: 1.95,
+  },
+  poker: {
+    name: "Video Poker",
+    slug: "poker",
+    minBet: 100,
+    maxBet: 500000,
+    houseEdge: 0.02,
+    description: "Jacks or Better video poker with hold and draw.",
+    maxMultiplier: 800,
+  },
+  lottery: {
+    name: "Lottery",
+    slug: "lottery",
+    minBet: 100,
+    maxBet: 100000,
+    houseEdge: 0.05,
+    description: "Pick 6 numbers from 1-49 and match the draw.",
+    maxMultiplier: 10000,
+  },
+  jackpot: {
+    name: "Jackpot",
+    slug: "jackpot",
+    minBet: 100,
+    maxBet: 500000,
+    houseEdge: 0.05,
+    description: "Progressive jackpot with weighted entries.",
+    maxMultiplier: 100,
+  },
 };
 
 export async function GET(

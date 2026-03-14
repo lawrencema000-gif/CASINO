@@ -8,6 +8,11 @@ interface BalanceState {
   loading: boolean;
 }
 
+/**
+ * Read-only balance hook with Supabase Realtime subscription.
+ * All balance mutations MUST go through /api/games (which uses atomic stored procedures).
+ * This hook only reads and subscribes — never writes directly to the profiles table.
+ */
 export function useBalance(userId: string | undefined) {
   const [state, setState] = useState<BalanceState>({
     balance: 0,
@@ -42,7 +47,7 @@ export function useBalance(userId: string | undefined) {
 
     if (!userId) return;
 
-    // Subscribe to realtime balance changes
+    // Subscribe to realtime balance changes (set by server-side stored procedures)
     const channel = supabase
       .channel(`profile-balance-${userId}`)
       .on(
@@ -69,68 +74,14 @@ export function useBalance(userId: string | undefined) {
     };
   }, [userId, supabase, fetchBalance]);
 
-  const placeBet = useCallback(
-    async (amount: number): Promise<{ success: boolean; newBalance: number }> => {
-      if (!userId) return { success: false, newBalance: 0 };
-      if (amount <= 0) return { success: false, newBalance: state.balance };
-      if (amount > state.balance)
-        return { success: false, newBalance: state.balance };
-
-      // Optimistic update
-      const previousBalance = state.balance;
-      const newBalance = previousBalance - amount;
-      setState({ balance: newBalance, loading: false });
-
-      const { data, error } = await supabase
-        .from("profiles")
-        .update({ balance: newBalance })
-        .eq("id", userId)
-        .select("balance")
-        .single();
-
-      if (error) {
-        // Rollback optimistic update
-        setState({ balance: previousBalance, loading: false });
-        console.error("Error placing bet:", error);
-        return { success: false, newBalance: previousBalance };
-      }
-
-      const actualBalance = data?.balance ?? newBalance;
-      setState({ balance: actualBalance, loading: false });
-      return { success: true, newBalance: actualBalance };
-    },
-    [userId, state.balance, supabase]
-  );
-
-  const addWinnings = useCallback(
-    async (amount: number): Promise<{ success: boolean; newBalance: number }> => {
-      if (!userId) return { success: false, newBalance: 0 };
-      if (amount <= 0) return { success: false, newBalance: state.balance };
-
-      // Optimistic update
-      const previousBalance = state.balance;
-      const newBalance = previousBalance + amount;
-      setState({ balance: newBalance, loading: false });
-
-      const { data, error } = await supabase
-        .from("profiles")
-        .update({ balance: newBalance })
-        .eq("id", userId)
-        .select("balance")
-        .single();
-
-      if (error) {
-        setState({ balance: previousBalance, loading: false });
-        console.error("Error adding winnings:", error);
-        return { success: false, newBalance: previousBalance };
-      }
-
-      const actualBalance = data?.balance ?? newBalance;
-      setState({ balance: actualBalance, loading: false });
-      return { success: true, newBalance: actualBalance };
-    },
-    [userId, state.balance, supabase]
-  );
+  /**
+   * Update the local balance state from an API response.
+   * This does NOT write to the database — it just syncs the client
+   * with the balance returned from /api/games.
+   */
+  const setBalanceFromApi = useCallback((newBalance: number) => {
+    setState({ balance: newBalance, loading: false });
+  }, []);
 
   const refreshBalance = useCallback(() => {
     fetchBalance();
@@ -139,8 +90,7 @@ export function useBalance(userId: string | undefined) {
   return {
     balance: state.balance,
     loading: state.loading,
-    placeBet,
-    addWinnings,
+    setBalanceFromApi,
     refreshBalance,
   };
 }

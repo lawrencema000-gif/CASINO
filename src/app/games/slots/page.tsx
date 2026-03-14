@@ -25,7 +25,9 @@ import Link from "next/link";
 const SYMBOL_HEIGHT = 100; // px per symbol tile
 const VISIBLE_ROWS = 3;
 const REEL_REPEATS = 4; // repeat symbol set this many times in the reel strip
-const REEL_STOP_TIMES = [1000, 1700, 2400]; // stagger ms
+/* Factor-based staggered stop times from html5-slot-machine:
+   factor = 1 + Math.pow(idx/2, 2) → 1s, 1.25s, 2s, 3.25s, 5s */
+const REEL_STOP_TIMES = [1000, 1250, 2000, 3250, 5000]; // stagger ms
 
 type GamePhase =
   | "idle"
@@ -33,11 +35,23 @@ type GamePhase =
   | "stopping_reel_1"
   | "stopping_reel_2"
   | "stopping_reel_3"
+  | "stopping_reel_4"
+  | "stopping_reel_5"
   | "evaluating"
   | "celebrating";
 
-const PAYLINE_COLORS = ["#FFD700", "#00FF88", "#60A5FA", "#F472B6", "#A78BFA"];
-const PAYLINE_LABELS = ["TOP", "MID", "BOT", "D1", "D2"];
+const PAYLINE_COLORS = [
+  "#FFD700", "#00FF88", "#60A5FA", "#F472B6", "#A78BFA",
+  "#EF4444", "#14B8A6", "#F59E0B", "#8B5CF6", "#06B6D4",
+  "#EC4899", "#22C55E", "#3B82F6", "#F97316", "#6366F1",
+  "#10B981", "#E11D48", "#0EA5E9", "#D946EF", "#84CC16",
+];
+const PAYLINE_LABELS = [
+  "MID", "TOP", "BOT", "V\u2193", "V\u2191",
+  "W1", "W2", "D\u2198", "D\u2197", "S1",
+  "S2", "P1", "P2", "W3", "W4",
+  "W5", "W6", "A1", "A2", "A3",
+];
 
 /* Symbol visuals: SVG paths, display names, and accent colors */
 const SYMBOL_VISUALS: Record<string, { src: string; name: string; color: string }> = {
@@ -174,7 +188,7 @@ function ReelStrip({
       className="relative overflow-hidden"
       style={{
         height: VISIBLE_ROWS * SYMBOL_HEIGHT,
-        width: 120,
+        width: 100,
       }}
     >
       {/* Reel strip */}
@@ -211,7 +225,7 @@ function ReelStrip({
                 className={cn(
                   "w-16 h-16 object-contain drop-shadow-lg",
                   symId === "star" && "animate-pulse",
-                  spinning && "blur-[0.5px]"
+                  spinning && "blur-[2px]"
                 )}
                 style={{
                   filter: isWin
@@ -282,7 +296,7 @@ export default function SlotsPage() {
   const [betAmount, setBetAmount] = useState(100);
   const [phase, setPhase] = useState<GamePhase>("idle");
   const [grid, setGrid] = useState<string[][]>(() =>
-    Array.from({ length: 3 }, () =>
+    Array.from({ length: 5 }, () =>
       Array.from(
         { length: 3 },
         () => SYMBOLS[Math.floor(Math.random() * SYMBOLS.length)].id
@@ -306,7 +320,7 @@ export default function SlotsPage() {
   const [bigWinAmount, setBigWinAmount] = useState(0);
   const [bigWinType, setBigWinType] = useState<"big" | "jackpot">("big");
   const [isSpinning, setIsSpinning] = useState(false);
-  const [reelsStopped, setReelsStopped] = useState([true, true, true]);
+  const [reelsStopped, setReelsStopped] = useState([true, true, true, true, true]);
   const [resultHistory, setResultHistory] = useState<
     { grid: string[][]; win: number }[]
   >([]);
@@ -319,7 +333,7 @@ export default function SlotsPage() {
 
   /* Build reel strips (static per mount) */
   const reelStrips = useMemo(
-    () => [buildReelStrip(), buildReelStrip(), buildReelStrip()],
+    () => [buildReelStrip(), buildReelStrip(), buildReelStrip(), buildReelStrip(), buildReelStrip()],
     []
   );
 
@@ -361,7 +375,7 @@ export default function SlotsPage() {
     setShowCoinShower(false);
     setShowBigWin(false);
     setIsSpinning(true);
-    setReelsStopped([false, false, false]);
+    setReelsStopped([false, false, false, false, false]);
 
     /* deduct bet */
     if (!user) {
@@ -375,8 +389,8 @@ export default function SlotsPage() {
     /* update grid to the target (reel strips will pick these up) */
     setGrid(result.reels);
 
-    /* stagger reel stops */
-    for (let reel = 0; reel < 3; reel++) {
+    /* stagger reel stops — factor-based timing from html5-slot-machine */
+    for (let reel = 0; reel < 5; reel++) {
       const stopTime = REEL_STOP_TIMES[reel] * speedMult;
       await new Promise((r) => setTimeout(r, reel === 0 ? stopTime : (REEL_STOP_TIMES[reel] - REEL_STOP_TIMES[reel - 1]) * speedMult));
       setReelsStopped((prev) => {
@@ -384,14 +398,14 @@ export default function SlotsPage() {
         next[reel] = true;
         return next;
       });
-      if (reel < 2) {
+      if (reel < 4) {
         setPhase(
           `stopping_reel_${reel + 1}` as GamePhase
         );
       }
     }
 
-    setPhase("stopping_reel_3");
+    setPhase("stopping_reel_5");
     await new Promise((r) => setTimeout(r, 100 * speedMult));
     setIsSpinning(false);
 
@@ -495,7 +509,7 @@ export default function SlotsPage() {
 
   /* Compute winning rows per reel */
   const winningRowsByReel = useMemo(() => {
-    const map: Set<number>[] = [new Set(), new Set(), new Set()];
+    const map: Set<number>[] = [new Set(), new Set(), new Set(), new Set(), new Set()];
     winningCells.forEach((key) => {
       const [reel, row] = key.split("-").map(Number);
       map[reel]?.add(row);
@@ -731,9 +745,9 @@ export default function SlotsPage() {
 
           {/* ── Reel Area ── */}
           <div className="flex items-stretch">
-            {/* Payline indicators left */}
+            {/* Payline indicators left — show first 5 for space */}
             <div className="flex flex-col justify-around py-4 px-2 md:px-3 gap-1">
-              {PAYLINE_LABELS.map((label, i) => {
+              {PAYLINE_LABELS.slice(0, 5).map((label, i) => {
                 const isActive = winResult?.paylines.some(
                   (p) => p.line === i
                 );
@@ -802,14 +816,14 @@ export default function SlotsPage() {
                     >
                       <svg
                         className="w-full h-full"
-                        viewBox={`0 0 ${3 * 124} ${VISIBLE_ROWS * SYMBOL_HEIGHT}`}
+                        viewBox={`0 0 ${5 * 104} ${VISIBLE_ROWS * SYMBOL_HEIGHT}`}
                         preserveAspectRatio="none"
                       >
                         <polyline
                           points={line
                             .map(
                               (row, reel) =>
-                                `${reel * 124 + 62},${row * SYMBOL_HEIGHT + SYMBOL_HEIGHT / 2}`
+                                `${reel * 104 + 52},${row * SYMBOL_HEIGHT + SYMBOL_HEIGHT / 2}`
                             )
                             .join(" ")}
                           fill="none"
@@ -824,7 +838,7 @@ export default function SlotsPage() {
                   );
                 })}
 
-                {[0, 1, 2].map((reelIdx) => (
+                {[0, 1, 2, 3, 4].map((reelIdx) => (
                   <div
                     key={reelIdx}
                     className="rounded-lg overflow-hidden relative"
@@ -1105,7 +1119,7 @@ export default function SlotsPage() {
                   }}
                 >
                   <span className="text-sm md:text-base font-bold text-[#8B5CF6]">
-                    5
+                    20
                   </span>
                 </div>
               </div>
@@ -1292,17 +1306,17 @@ export default function SlotsPage() {
       >
         <div className="space-y-1 max-h-[60vh] overflow-y-auto">
           <p className="text-xs text-gray-400 mb-3">
-            Match 3 symbols on any of 5 paylines (3 rows + 2 diagonals). AT-AT
-            is wild and substitutes for any symbol.
+            5-reel slot machine with 20 paylines. Match 3+ consecutive symbols from left.
+            AT-AT is wild and substitutes for any symbol. 4-of-a-kind pays 2x, 5-of-a-kind pays 5x!
           </p>
 
           {/* Payline patterns */}
           <div className="mb-4 p-3 rounded-lg bg-black/30 border border-gray-800">
             <p className="text-xs font-semibold text-gray-300 mb-2">
-              Payline Patterns
+              Payline Patterns (20 lines)
             </p>
-            <div className="grid grid-cols-5 gap-2">
-              {PAYLINE_LABELS.map((label, i) => {
+            <div className="grid grid-cols-5 sm:grid-cols-10 gap-2">
+              {PAYLINE_LABELS.slice(0, 10).map((label, i) => {
                 const line = getPaylines()[i];
                 return (
                   <div key={label} className="text-center">
@@ -1312,12 +1326,12 @@ export default function SlotsPage() {
                     >
                       {label}
                     </span>
-                    <div className="grid grid-cols-3 gap-px mt-1">
+                    <div className="grid grid-cols-5 gap-px mt-1">
                       {[0, 1, 2].map((row) =>
-                        [0, 1, 2].map((reel) => (
+                        [0, 1, 2, 3, 4].map((reel) => (
                           <div
                             key={`${row}-${reel}`}
-                            className="w-3 h-3 rounded-sm"
+                            className="w-2 h-2 rounded-sm"
                             style={{
                               background:
                                 line[reel] === row
@@ -1335,18 +1349,19 @@ export default function SlotsPage() {
           </div>
 
           {/* Symbol payouts */}
-          <div className="grid grid-cols-4 gap-2 text-xs text-gray-400 font-semibold uppercase tracking-wider pb-2 border-b border-gray-700">
+          <div className="grid grid-cols-5 gap-2 text-xs text-gray-400 font-semibold uppercase tracking-wider pb-2 border-b border-gray-700">
             <span>Symbol</span>
             <span>Name</span>
-            <span className="text-center">3x Match</span>
-            <span className="text-center">Type</span>
+            <span className="text-center">3x</span>
+            <span className="text-center">4x</span>
+            <span className="text-center">5x</span>
           </div>
           {SYMBOLS.map((sym) => {
             const visual = SYMBOL_VISUALS[sym.id];
             return (
               <div
                 key={sym.id}
-                className="grid grid-cols-4 gap-2 items-center py-2.5 border-b border-gray-800/50"
+                className="grid grid-cols-5 gap-2 items-center py-2.5 border-b border-gray-800/50"
               >
                 <div
                   className="w-10 h-10 flex items-center justify-center rounded-lg"
@@ -1365,19 +1380,14 @@ export default function SlotsPage() {
                 <span className="text-sm text-gray-300" style={{ color: visual?.color }}>
                   {visual?.name ?? sym.name}
                 </span>
-                <span className="text-center text-[#FFD700] font-bold text-sm">
-                  {sym.multiplier > 0 ? `${sym.multiplier}x bet` : "---"}
+                <span className="text-center text-[#FFD700] font-bold text-xs">
+                  {sym.multiplier > 0 ? `${sym.multiplier}x` : "WILD"}
                 </span>
-                <span className="text-center text-gray-500 text-xs">
-                  {sym.id === "star" ? (
-                    <span className="text-[#FFD700]">WILD</span>
-                  ) : sym.multiplier >= 25 ? (
-                    <span className="text-[#EF4444]">Premium</span>
-                  ) : sym.multiplier >= 10 ? (
-                    <span className="text-[#8B5CF6]">High</span>
-                  ) : (
-                    <span className="text-gray-500">Low</span>
-                  )}
+                <span className="text-center text-[#FFA500] font-bold text-xs">
+                  {sym.multiplier > 0 ? `${sym.multiplier * 2}x` : "WILD"}
+                </span>
+                <span className="text-center text-[#EF4444] font-bold text-xs">
+                  {sym.multiplier > 0 ? `${sym.multiplier * 5}x` : "WILD"}
                 </span>
               </div>
             );

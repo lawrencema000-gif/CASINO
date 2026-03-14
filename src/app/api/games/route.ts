@@ -2,20 +2,28 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import crypto from "crypto";
-import type { GameType, Json } from "@/lib/supabase/database.types";
+import type { Json } from "@/lib/supabase/database.types";
+import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit";
 
-const VALID_GAME_TYPES: GameType[] = [
+// All game types supported by the casino
+const VALID_GAME_TYPES = [
   "blackjack",
   "slots",
   "roulette",
   "dice",
-  "mines",
+  "coinflip",
   "crash",
   "plinko",
+  "poker",
+  "lottery",
+  "jackpot",
+  "mines",
   "keno",
   "limbo",
   "hilo",
-];
+] as const;
+
+type ValidGameType = (typeof VALID_GAME_TYPES)[number];
 
 const VALID_ACTIONS = [
   "bet",
@@ -30,7 +38,7 @@ const VALID_ACTIONS = [
 ];
 
 interface GameRequest {
-  gameType?: GameType;
+  gameType?: ValidGameType;
   gameId?: string;
   action: string;
   betAmount?: number;
@@ -47,13 +55,12 @@ function hashServerSeed(seed: string): string {
 }
 
 function generateGameResult(
-  gameType: GameType,
+  gameType: ValidGameType,
   serverSeed: string,
   clientSeed: string,
   nonce: number,
   gameData: Record<string, unknown>
 ): { result: Record<string, unknown>; multiplier: number } {
-  // Combine seeds for provably fair RNG
   const combinedSeed = `${serverSeed}:${clientSeed}:${nonce}`;
   const hash = crypto.createHash("sha256").update(combinedSeed).digest("hex");
   const roll = parseInt(hash.substring(0, 8), 16) / 0xffffffff;
@@ -64,7 +71,7 @@ function generateGameResult(
       const isOver = (gameData.isOver as boolean) ?? true;
       const diceResult = parseFloat((roll * 100).toFixed(2));
       const won = isOver ? diceResult > target : diceResult < target;
-      const edge = 0.01; // 1% house edge
+      const edge = 0.01;
       const winChance = isOver ? (100 - target) / 100 : target / 100;
       const mult = won ? parseFloat(((1 - edge) / winChance).toFixed(4)) : 0;
 
@@ -74,13 +81,23 @@ function generateGameResult(
       };
     }
 
+    case "coinflip": {
+      const choice = (gameData.choice as string) || "heads";
+      const coinResult = roll < 0.5 ? "heads" : "tails";
+      const won = coinResult === choice;
+
+      return {
+        result: { choice, coinResult, won },
+        multiplier: won ? 1.95 : 0,
+      };
+    }
+
     case "mines": {
       const mineCount = (gameData.mineCount as number) || 5;
       const totalTiles = 25;
       const revealed = (gameData.revealed as number[]) || [];
       const pickIndex = gameData.pick as number;
 
-      // Generate mine positions from seed
       const mines: number[] = [];
       for (let i = 0; i < mineCount; i++) {
         const mineHash = crypto
@@ -98,12 +115,11 @@ function generateGameResult(
       const safeRevealed = revealed.length + (hitMine ? 0 : 1);
       const safeTiles = totalTiles - mineCount;
 
-      // Calculate multiplier based on tiles revealed
       let mult = 1;
       for (let i = 0; i < safeRevealed; i++) {
         mult *= (totalTiles - i) / (totalTiles - mineCount - i);
       }
-      mult = hitMine ? 0 : parseFloat((mult * 0.97).toFixed(4)); // 3% edge
+      mult = hitMine ? 0 : parseFloat((mult * 0.97).toFixed(4));
 
       return {
         result: {
@@ -119,8 +135,7 @@ function generateGameResult(
 
     case "limbo": {
       const targetMultiplier = (gameData.targetMultiplier as number) || 2;
-      // Generate crash point
-      const e = 0.01; // 1% house edge
+      const e = 0.01;
       const crashPoint =
         roll === 0 ? 1 : parseFloat(((1 - e) / roll).toFixed(4));
       const won = crashPoint >= targetMultiplier;
@@ -138,7 +153,7 @@ function generateGameResult(
 
       return {
         result: { crashPoint, phase: "crashed" },
-        multiplier: 0, // Payout determined on cashout
+        multiplier: 0,
       };
     }
 
@@ -168,7 +183,6 @@ function generateGameResult(
         reels.push(reel);
       }
 
-      // Check middle row for matches
       const middleRow = reels.map((r) => r[1]);
       const counts: Record<string, number> = {};
       middleRow.forEach((s) => (counts[s] = (counts[s] || 0) + 1));
@@ -191,11 +205,18 @@ function generateGameResult(
       let mult = 0;
       if (maxMatch >= 3) {
         mult =
-          symbolMultipliers[bestSymbol] * (maxMatch === 5 ? 5 : maxMatch === 4 ? 2 : 1);
+          symbolMultipliers[bestSymbol] *
+          (maxMatch === 5 ? 5 : maxMatch === 4 ? 2 : 1);
       }
 
       return {
-        result: { reels, middleRow, matchCount: maxMatch, bestSymbol, won: mult > 0 },
+        result: {
+          reels,
+          middleRow,
+          matchCount: maxMatch,
+          bestSymbol,
+          won: mult > 0,
+        },
         multiplier: mult,
       };
     }
@@ -203,7 +224,7 @@ function generateGameResult(
     case "roulette": {
       const betType = (gameData.betType as string) || "red";
       const betNumber = gameData.betNumber as number | undefined;
-      const pocketCount = 37; // European roulette (0-36)
+      const pocketCount = 37;
       const pocket = Math.floor(roll * pocketCount);
 
       const redNumbers = [
@@ -267,7 +288,6 @@ function generateGameResult(
     }
 
     case "blackjack": {
-      // Simple initial deal - 2 cards each
       const deck = generateShuffledDeck(combinedSeed);
       const playerCards = [deck[0], deck[2]];
       const dealerCards = [deck[1], deck[3]];
@@ -293,6 +313,63 @@ function generateGameResult(
       };
     }
 
+    case "poker": {
+      const deck = generateShuffledDeck(combinedSeed);
+      const hand = deck.slice(0, 5);
+
+      return {
+        result: { hand, phase: "deal", held: [] },
+        multiplier: 0,
+      };
+    }
+
+    case "lottery": {
+      const picks = (gameData.picks as number[]) || [];
+      const drawnNumbers: number[] = [];
+
+      for (let i = 0; i < 6; i++) {
+        const drawHash = crypto
+          .createHash("sha256")
+          .update(`${combinedSeed}:draw:${i}`)
+          .digest("hex");
+        let num = (parseInt(drawHash.substring(0, 8), 16) % 49) + 1;
+        while (drawnNumbers.includes(num)) {
+          num = (num % 49) + 1;
+        }
+        drawnNumbers.push(num);
+      }
+
+      const matches = picks.filter((p: number) =>
+        drawnNumbers.includes(p)
+      ).length;
+
+      const lotteryPayouts: Record<number, number> = {
+        6: 10000,
+        5: 1000,
+        4: 100,
+        3: 10,
+        2: 2,
+      };
+      const mult = lotteryPayouts[matches] || 0;
+
+      return {
+        result: { picks, drawnNumbers, matches, won: mult > 0 },
+        multiplier: mult,
+      };
+    }
+
+    case "jackpot": {
+      // Progressive jackpot — weighted entry, roulette-style draw
+      const jackpotRoll = roll * 100;
+      const won = jackpotRoll < 1; // 1% chance
+      const mult = won ? 100 : 0;
+
+      return {
+        result: { roll: jackpotRoll, won, threshold: 1 },
+        multiplier: mult,
+      };
+    }
+
     case "plinko": {
       const rows = (gameData.rows as number) || 16;
       const risk = (gameData.risk as string) || "medium";
@@ -310,7 +387,6 @@ function generateGameResult(
         path.push(position);
       }
 
-      // Map final position to multiplier
       const normalizedPos = Math.abs(position);
       const multipliers: Record<string, number[]> = {
         low: [1.5, 1.2, 1.1, 1, 0.5, 0.3, 0.3, 0.5, 1, 1.1, 1.2, 1.5],
@@ -322,7 +398,13 @@ function generateGameResult(
       const mult = riskMultipliers[bucketIndex];
 
       return {
-        result: { path, finalPosition: position, bucket: bucketIndex, risk, rows },
+        result: {
+          path,
+          finalPosition: position,
+          bucket: bucketIndex,
+          risk,
+          rows,
+        },
         multiplier: mult,
       };
     }
@@ -344,9 +426,10 @@ function generateGameResult(
         drawnNumbers.push(num);
       }
 
-      const hits = picks.filter((p: number) => drawnNumbers.includes(p)).length;
+      const hits = picks.filter((p: number) =>
+        drawnNumbers.includes(p)
+      ).length;
 
-      // Keno payout table
       const payoutTable: Record<number, Record<number, number>> = {
         1: { 1: 3.5 },
         2: { 2: 6 },
@@ -362,7 +445,9 @@ function generateGameResult(
           : Object.keys(payoutTable)
               .map(Number)
               .reduce((prev, curr) =>
-                Math.abs(curr - numPicks) < Math.abs(prev - numPicks) ? curr : prev
+                Math.abs(curr - numPicks) < Math.abs(prev - numPicks)
+                  ? curr
+                  : prev
               );
       const mult = payoutTable[tableKey]?.[hits] || 0;
 
@@ -406,7 +491,19 @@ interface Card {
 function generateShuffledDeck(seed: string): Card[] {
   const suits = ["hearts", "diamonds", "clubs", "spades"];
   const ranks = [
-    "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "10",
+    "J",
+    "Q",
+    "K",
+    "A",
   ];
   const deck: Card[] = [];
 
@@ -420,7 +517,6 @@ function generateShuffledDeck(seed: string): Card[] {
     }
   }
 
-  // Fisher-Yates shuffle with seed
   for (let i = deck.length - 1; i > 0; i--) {
     const hash = crypto
       .createHash("sha256")
@@ -458,7 +554,7 @@ function calculateHandTotal(cards: Card[]): number {
  * Handle demo mode: calculate and return results without touching the database.
  */
 function handleDemoMode(
-  gameType: GameType,
+  gameType: ValidGameType,
   betAmount: number,
   gameData: Record<string, unknown>
 ): NextResponse {
@@ -483,7 +579,7 @@ function handleDemoMode(
     result,
     payout,
     multiplier,
-    balanceAfter: null, // Demo mode: no persistent balance
+    balanceAfter: null,
     settled: true,
     serverSeedHash,
     demoMode: true,
@@ -497,7 +593,10 @@ export async function POST(request: NextRequest) {
 
     // ---------- Demo mode (no auth required) ----------
     if (demoMode) {
-      if (!gameType || !VALID_GAME_TYPES.includes(gameType)) {
+      if (
+        !gameType ||
+        !VALID_GAME_TYPES.includes(gameType as ValidGameType)
+      ) {
         return NextResponse.json(
           { error: "Invalid game type" },
           { status: 400 }
@@ -509,36 +608,57 @@ export async function POST(request: NextRequest) {
           { status: 400 }
         );
       }
-      return handleDemoMode(gameType, betAmount, gameData);
+      return handleDemoMode(gameType as ValidGameType, betAmount, gameData);
     }
 
     // ---------- Authenticated mode ----------
     const supabase = await createClient();
 
-    // Verify authentication
     const {
       data: { user },
       error: authError,
     } = await supabase.auth.getUser();
 
     if (authError || !user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Rate limit: 10 bets/min per user
+    const ipHeader =
+      request.headers.get("x-forwarded-for") ??
+      request.headers.get("x-real-ip") ??
+      "unknown";
+    const ip = ipHeader.split(",")[0].trim();
+
+    const userLimit = checkRateLimit(`user:${user.id}`, RATE_LIMITS.bets);
+    if (!userLimit.allowed) {
       return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
+        {
+          error: "Rate limit exceeded. Please slow down.",
+          retryAfterMs: userLimit.resetMs,
+        },
+        { status: 429 }
       );
     }
 
-    // Validate action
+    const ipLimit = checkRateLimit(`ip:${ip}`, RATE_LIMITS.api);
+    if (!ipLimit.allowed) {
+      return NextResponse.json(
+        { error: "Too many requests from this IP." },
+        { status: 429 }
+      );
+    }
+
     if (!action || !VALID_ACTIONS.includes(action)) {
-      return NextResponse.json(
-        { error: "Invalid action" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid action" }, { status: 400 });
     }
 
-    // For new bets
+    // ========== NEW BET ==========
     if (action === "bet" || action === "spin" || action === "roll") {
-      if (!gameType || !VALID_GAME_TYPES.includes(gameType)) {
+      if (
+        !gameType ||
+        !VALID_GAME_TYPES.includes(gameType as ValidGameType)
+      ) {
         return NextResponse.json(
           { error: "Invalid game type" },
           { status: 400 }
@@ -548,27 +668,6 @@ export async function POST(request: NextRequest) {
       if (!betAmount || betAmount <= 0) {
         return NextResponse.json(
           { error: "Invalid bet amount" },
-          { status: 400 }
-        );
-      }
-
-      // Get current balance using admin client for reliability
-      const { data: profile, error: profileError } = await supabaseAdmin
-        .from("profiles")
-        .select("balance, total_wagered, total_won")
-        .eq("id", user.id)
-        .single();
-
-      if (profileError || !profile) {
-        return NextResponse.json(
-          { error: "Profile not found" },
-          { status: 404 }
-        );
-      }
-
-      if (profile.balance < betAmount) {
-        return NextResponse.json(
-          { error: "Insufficient balance" },
           { status: 400 }
         );
       }
@@ -577,12 +676,32 @@ export async function POST(request: NextRequest) {
       const serverSeed = generateServerSeed();
       const serverSeedHash = hashServerSeed(serverSeed);
       const clientSeed =
-        (gameData.clientSeed as string) || crypto.randomBytes(16).toString("hex");
+        (gameData.clientSeed as string) ||
+        crypto.randomBytes(16).toString("hex");
       const nonce = 1;
 
-      // Process game logic
+      // ---- ATOMIC BET: use process_bet stored procedure (FOR UPDATE lock) ----
+      const { data: gameId, error: betError } = await supabaseAdmin.rpc(
+        "process_bet",
+        {
+          p_player_id: user.id,
+          p_game_type: gameType,
+          p_bet_amount: betAmount,
+          p_server_seed_hash: serverSeedHash,
+          p_client_seed: clientSeed,
+          p_nonce: nonce,
+        }
+      );
+
+      if (betError) {
+        const msg = betError.message || "Failed to place bet";
+        const status = msg.includes("Insufficient balance") ? 400 : 500;
+        return NextResponse.json({ error: msg }, { status });
+      }
+
+      // Compute game result
       const { result, multiplier } = generateGameResult(
-        gameType,
+        gameType as ValidGameType,
         serverSeed,
         clientSeed,
         nonce,
@@ -590,87 +709,65 @@ export async function POST(request: NextRequest) {
       );
 
       const payout = Math.floor(betAmount * multiplier);
-      const newBalance = profile.balance - betAmount + payout;
       const settled =
         gameType !== "blackjack" ||
         (result as Record<string, unknown>).playerBlackjack === true;
 
-      // Atomic balance update using admin client
-      const updateData: Record<string, unknown> = {
-        balance: newBalance,
-        total_wagered: (profile.total_wagered || 0) + betAmount,
-      };
-      if (settled && payout > 0) {
-        updateData.total_won = (profile.total_won || 0) + payout;
-      }
-      const { error: balanceError } = await supabaseAdmin
-        .from("profiles")
-        .update(updateData)
-        .eq("id", user.id);
+      // ---- ATOMIC SETTLE: use settle_game stored procedure ----
+      if (settled) {
+        const { data: newBalance, error: settleError } =
+          await supabaseAdmin.rpc("settle_game", {
+            p_game_id: gameId,
+            p_player_id: user.id,
+            p_result: result as unknown as Json,
+            p_payout: payout,
+            p_multiplier: multiplier,
+          });
 
-      if (balanceError) {
-        return NextResponse.json(
-          { error: "Failed to update balance" },
-          { status: 500 }
-        );
-      }
+        if (settleError) {
+          console.error("Error settling game:", settleError);
+          return NextResponse.json(
+            { error: "Failed to settle game" },
+            { status: 500 }
+          );
+        }
 
-      // Record the game using admin client
-      const { data: gameRecord, error: gameError } = await supabaseAdmin
-        .from("games")
-        .insert({
-          player_id: user.id,
-          game_type: gameType,
-          bet_amount: betAmount,
-          server_seed_hash: serverSeedHash,
-          client_seed: clientSeed,
-          nonce,
-          result: result as unknown as Json,
+        return NextResponse.json({
+          gameId,
+          result,
           payout,
           multiplier,
-          settled,
-        })
-        .select("id")
-        .single();
-
-      if (gameError) {
-        console.error("Error recording game:", gameError);
-      }
-
-      // Record bet transaction
-      await supabaseAdmin.from("transactions").insert({
-        player_id: user.id,
-        type: "bet",
-        amount: betAmount,
-        balance_after: profile.balance - betAmount,
-        game_id: gameRecord?.id || null,
-        description: `${gameType} bet`,
-      });
-
-      // Record win transaction if applicable
-      if (payout > 0 && settled) {
-        await supabaseAdmin.from("transactions").insert({
-          player_id: user.id,
-          type: "win",
-          amount: payout,
-          balance_after: newBalance,
-          game_id: gameRecord?.id || null,
-          description: `${gameType} win - ${multiplier}x`,
+          balanceAfter: newBalance,
+          settled: true,
+          serverSeedHash,
         });
       }
 
+      // Unsettled game (e.g. blackjack player_turn) — update result but don't settle
+      await supabaseAdmin
+        .from("games")
+        .update({ result: result as unknown as Json })
+        .eq("id", gameId);
+
+      // Fetch updated balance (bet was already deducted by process_bet)
+      const { data: profileAfterBet } = await supabaseAdmin
+        .from("profiles")
+        .select("balance")
+        .eq("id", user.id)
+        .single();
+
       return NextResponse.json({
-        gameId: gameRecord?.id,
+        gameId,
         result,
-        payout,
-        multiplier,
-        balanceAfter: newBalance,
-        settled,
+        payout: 0,
+        multiplier: 0,
+        balanceAfter: profileAfterBet?.balance ?? 0,
+        settled: false,
         serverSeedHash,
       });
     }
 
-    // For game actions on existing games (hit, stand, cashout, etc.)
+    // ========== GAME ACTIONS (hit, stand, cashout, pick) ==========
     if (body.gameId) {
       const { data: existingGame, error: gameError } = await supabaseAdmin
         .from("games")
@@ -683,19 +780,6 @@ export async function POST(request: NextRequest) {
       if (gameError || !existingGame) {
         return NextResponse.json(
           { error: "Game not found or already settled" },
-          { status: 404 }
-        );
-      }
-
-      const { data: profile } = await supabaseAdmin
-        .from("profiles")
-        .select("balance")
-        .eq("id", user.id)
-        .single();
-
-      if (!profile) {
-        return NextResponse.json(
-          { error: "Profile not found" },
           { status: 404 }
         );
       }
@@ -732,13 +816,11 @@ export async function POST(request: NextRequest) {
           settled = busted;
           multiplier = 0;
         } else if (action === "stand") {
-          const dealerCards = currentResult.dealerCards as Card[];
-          // Reveal dealer's hidden card
+          const dealerCards = [...(currentResult.dealerCards as Card[])];
           if (dealerCards[1].suit === "hidden") {
             dealerCards[1] = deck[3];
           }
 
-          // Dealer draws to 17
           let dealerIdx = deckPos;
           while (calculateHandTotal(dealerCards) < 17) {
             dealerCards.push(deck[dealerIdx]);
@@ -750,8 +832,7 @@ export async function POST(request: NextRequest) {
           );
           const dealerTotal = calculateHandTotal(dealerCards);
           const dealerBusted = dealerTotal > 21;
-          const playerWins =
-            dealerBusted || playerTotal > dealerTotal;
+          const playerWins = dealerBusted || playerTotal > dealerTotal;
           const push = !dealerBusted && playerTotal === dealerTotal;
 
           multiplier = playerWins ? 2 : push ? 1 : 0;
@@ -769,7 +850,10 @@ export async function POST(request: NextRequest) {
             push,
           };
         }
-      } else if (action === "cashout" && existingGame.game_type === "crash") {
+      } else if (
+        action === "cashout" &&
+        existingGame.game_type === "crash"
+      ) {
         const cashoutMultiplier = (gameData.multiplier as number) || 1;
         multiplier = cashoutMultiplier;
         payout = Math.floor(existingGame.bet_amount * multiplier);
@@ -797,13 +881,18 @@ export async function POST(request: NextRequest) {
         const mineResultObj = mineResult as Record<string, unknown>;
         settled = mineResultObj.hitMine as boolean;
         multiplier = settled ? 0 : mineMult;
-        payout = settled ? 0 : Math.floor(existingGame.bet_amount * multiplier);
+        payout = settled
+          ? 0
+          : Math.floor(existingGame.bet_amount * multiplier);
 
         newResult = {
           ...currentResult,
           ...mineResultObj,
         };
-      } else if (action === "cashout" && existingGame.game_type === "mines") {
+      } else if (
+        action === "cashout" &&
+        existingGame.game_type === "mines"
+      ) {
         multiplier = existingGame.multiplier || 1;
         payout = Math.floor(existingGame.bet_amount * multiplier);
         settled = true;
@@ -815,45 +904,57 @@ export async function POST(request: NextRequest) {
         };
       }
 
-      const newBalance = profile.balance + payout;
+      // ---- ATOMIC SETTLE via stored procedure ----
+      if (settled) {
+        const { data: newBalance, error: settleError } =
+          await supabaseAdmin.rpc("settle_game", {
+            p_game_id: body.gameId,
+            p_player_id: user.id,
+            p_result: newResult as unknown as Json,
+            p_payout: payout,
+            p_multiplier: multiplier,
+          });
 
-      // Update game record
+        if (settleError) {
+          console.error("Error settling game:", settleError);
+          return NextResponse.json(
+            { error: "Failed to settle game" },
+            { status: 500 }
+          );
+        }
+
+        return NextResponse.json({
+          gameId: body.gameId,
+          result: newResult,
+          payout,
+          multiplier,
+          balanceAfter: newBalance,
+          settled: true,
+        });
+      }
+
+      // Unsettled update (e.g. blackjack hit without bust)
       await supabaseAdmin
         .from("games")
         .update({
           result: newResult as unknown as Json,
-          payout,
-          multiplier,
-          settled,
           nonce: existingGame.nonce + 1,
         })
         .eq("id", body.gameId);
 
-      // Update balance
-      if (payout > 0) {
-        await supabaseAdmin
-          .from("profiles")
-          .update({ balance: newBalance })
-          .eq("id", user.id);
-
-        // Record win transaction
-        await supabaseAdmin.from("transactions").insert({
-          player_id: user.id,
-          type: "win",
-          amount: payout,
-          balance_after: newBalance,
-          game_id: body.gameId,
-          description: `${existingGame.game_type} win - ${multiplier}x`,
-        });
-      }
+      const { data: profile } = await supabaseAdmin
+        .from("profiles")
+        .select("balance")
+        .eq("id", user.id)
+        .single();
 
       return NextResponse.json({
         gameId: body.gameId,
         result: newResult,
-        payout,
-        multiplier,
-        balanceAfter: payout > 0 ? newBalance : profile.balance,
-        settled,
+        payout: 0,
+        multiplier: 0,
+        balanceAfter: profile?.balance ?? 0,
+        settled: false,
       });
     }
 
