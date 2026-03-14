@@ -10,7 +10,16 @@ async function verifyAdmin() {
   } = await supabase.auth.getUser();
 
   if (error || !user) return null;
-  if (user.email !== "admin@fortuna.casino") return null;
+
+  // Check role column (if exists) or fallback to email
+  const { data: profile } = await supabaseAdmin
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+  const isAdmin =
+    profile?.role === "admin" || user.email === "admin@fortuna.casino";
+  if (!isAdmin) return null;
   return user;
 }
 

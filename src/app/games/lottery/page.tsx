@@ -4,6 +4,9 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowLeft, Sparkles, Zap, Trophy, History, RotateCcw, Ticket, X } from 'lucide-react'
 import Link from 'next/link'
+import { useAuth } from '@/hooks/useAuth'
+import { useBalance } from '@/hooks/useBalance'
+import { useGame } from '@/hooks/useGame'
 
 interface LotteryResult {
   selectedNumbers: number[]
@@ -14,19 +17,29 @@ interface LotteryResult {
 }
 
 const PAYOUT_TIERS = [
-  { matches: 6, label: 'JACKPOT', color: '#FFD700', icon: '👑' },
-  { matches: 5, label: 'Pool / 10', color: '#00FF88', icon: '🎉' },
-  { matches: 4, label: 'Pool / 100', color: '#8B5CF6', icon: '✨' },
-  { matches: 3, label: 'No Prize', color: '#EF4444', icon: '—' },
-  { matches: 2, label: 'No Prize', color: '#EF4444', icon: '—' },
-  { matches: 1, label: 'No Prize', color: '#EF4444', icon: '—' },
-  { matches: 0, label: 'No Prize', color: '#EF4444', icon: '—' },
+  { matches: 6, label: 'JACKPOT', color: '#FFD700', icon: '\u{1F451}' },
+  { matches: 5, label: 'Pool / 10', color: '#00FF88', icon: '\u{1F389}' },
+  { matches: 4, label: 'Pool / 100', color: '#8B5CF6', icon: '\u2728' },
+  { matches: 3, label: 'No Prize', color: '#EF4444', icon: '\u2014' },
+  { matches: 2, label: 'No Prize', color: '#EF4444', icon: '\u2014' },
+  { matches: 1, label: 'No Prize', color: '#EF4444', icon: '\u2014' },
+  { matches: 0, label: 'No Prize', color: '#EF4444', icon: '\u2014' },
 ]
 
 const BALL_COLORS = ['#FFD700', '#8B5CF6', '#00FF88', '#EF4444', '#3B82F6', '#F97316']
 
 export default function LotteryPage() {
-  const [balance, setBalance] = useState(10000)
+  const { user, loading: authLoading } = useAuth()
+  const { balance, setBalanceFromApi } = useBalance(user?.id)
+  const { placeBet, loading: gameLoading, error: gameError } = useGame((newBalance) => {
+    setBalanceFromApi(newBalance)
+  })
+
+  // Demo mode fallback
+  const isDemo = !user && !authLoading
+  const [demoBalance, setDemoBalance] = useState(10000)
+  const effectiveBalance = isDemo ? demoBalance : balance
+
   const [selectedNumbers, setSelectedNumbers] = useState<number[]>([])
   const [drawnNumbers, setDrawnNumbers] = useState<number[]>([])
   const [revealedCount, setRevealedCount] = useState(0)
@@ -99,9 +112,8 @@ export default function LotteryPage() {
   }, [isDrawing])
 
   const buyAndDraw = useCallback(async () => {
-    if (selectedNumbers.length !== 6 || isDrawing || betAmount > balance || betAmount <= 0) return
+    if (selectedNumbers.length !== 6 || isDrawing || betAmount > effectiveBalance || betAmount <= 0) return
 
-    setBalance(prev => prev - betAmount)
     setPool(prev => prev + betAmount)
     setTicketsBought(prev => prev + 1)
     setIsDrawing(true)
@@ -109,54 +121,109 @@ export default function LotteryPage() {
     setShowCelebration(false)
     setRevealedCount(0)
 
-    // Generate 6 unique winning numbers
-    const drawn: number[] = []
-    while (drawn.length < 6) {
-      const n = Math.floor(Math.random() * 49) + 1
-      if (!drawn.includes(n)) drawn.push(n)
+    if (isDemo) {
+      // Demo mode: fully client-side
+      setDemoBalance(prev => prev - betAmount)
+
+      // Generate 6 unique winning numbers
+      const drawn: number[] = []
+      while (drawn.length < 6) {
+        const n = Math.floor(Math.random() * 49) + 1
+        if (!drawn.includes(n)) drawn.push(n)
+      }
+      setDrawnNumbers(drawn)
+
+      // Reveal one by one with dramatic pauses
+      for (let i = 0; i < 6; i++) {
+        await new Promise(resolve => setTimeout(resolve, 700 + i * 100))
+        setRevealedCount(i + 1)
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 600))
+
+      const matches = selectedNumbers.filter(n => drawn.includes(n)).length
+      let payout = 0
+      const currentPool = pool + betAmount
+
+      if (matches === 6) {
+        payout = currentPool
+      } else if (matches === 5) {
+        payout = Math.floor(currentPool / 10)
+      } else if (matches === 4) {
+        payout = Math.floor(currentPool / 100)
+      }
+
+      if (payout > 0) {
+        setDemoBalance(prev => prev + payout)
+        if (matches >= 5) setShowCelebration(true)
+      }
+
+      setMatchCount(matches)
+      setLastPayout(payout)
+      setIsDrawing(false)
+      setShowResult(true)
+
+      setTicketHistory(prev => [
+        { selectedNumbers: [...selectedNumbers], drawnNumbers: drawn, matchCount: matches, payout, ticketCost: betAmount },
+        ...prev,
+      ].slice(0, 30))
+    } else {
+      // Server mode: place bet via API with picks
+      const result = await placeBet({
+        gameType: 'lottery',
+        betAmount,
+        action: 'bet',
+        gameData: { picks: selectedNumbers },
+      })
+
+      if (!result) {
+        setIsDrawing(false)
+        return
+      }
+
+      // Use server-returned drawn numbers
+      const serverResult = result.result as { picks: number[]; drawnNumbers: number[]; matches: number; won: boolean }
+      const drawn = serverResult.drawnNumbers
+      setDrawnNumbers(drawn)
+
+      // Reveal one by one with dramatic pauses
+      for (let i = 0; i < 6; i++) {
+        await new Promise(resolve => setTimeout(resolve, 700 + i * 100))
+        setRevealedCount(i + 1)
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 600))
+
+      const matches = serverResult.matches
+      const payout = result.payout
+
+      if (payout > 0 && matches >= 5) {
+        setShowCelebration(true)
+      }
+
+      setMatchCount(matches)
+      setLastPayout(payout)
+      setIsDrawing(false)
+      setShowResult(true)
+
+      setTicketHistory(prev => [
+        { selectedNumbers: [...selectedNumbers], drawnNumbers: drawn, matchCount: matches, payout, ticketCost: betAmount },
+        ...prev,
+      ].slice(0, 30))
     }
-    setDrawnNumbers(drawn)
-
-    // Reveal one by one with dramatic pauses
-    for (let i = 0; i < 6; i++) {
-      await new Promise(resolve => setTimeout(resolve, 700 + i * 100))
-      setRevealedCount(i + 1)
-    }
-
-    await new Promise(resolve => setTimeout(resolve, 600))
-
-    const matches = selectedNumbers.filter(n => drawn.includes(n)).length
-    let payout = 0
-    const currentPool = pool + betAmount
-
-    if (matches === 6) {
-      payout = currentPool
-    } else if (matches === 5) {
-      payout = Math.floor(currentPool / 10)
-    } else if (matches === 4) {
-      payout = Math.floor(currentPool / 100)
-    }
-
-    if (payout > 0) {
-      setBalance(prev => prev + payout)
-      if (matches >= 5) setShowCelebration(true)
-    }
-
-    setMatchCount(matches)
-    setLastPayout(payout)
-    setIsDrawing(false)
-    setShowResult(true)
-
-    setTicketHistory(prev => [
-      { selectedNumbers: [...selectedNumbers], drawnNumbers: drawn, matchCount: matches, payout, ticketCost: betAmount },
-      ...prev,
-    ].slice(0, 30))
-  }, [selectedNumbers, isDrawing, betAmount, balance, pool])
+  }, [selectedNumbers, isDrawing, betAmount, effectiveBalance, pool, isDemo, placeBet])
 
   const presetBets = [50, 100, 250, 500, 1000]
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-white">
+      {/* Demo Mode Banner */}
+      {isDemo && (
+        <div className="bg-yellow-500/90 text-black text-center text-xs font-bold py-1.5 px-4">
+          DEMO MODE — Sign up to play for real
+        </div>
+      )}
+
       {/* Celebration overlay */}
       <AnimatePresence>
         {showCelebration && (
@@ -218,11 +285,18 @@ export default function LotteryPage() {
         </div>
         <div className="text-right">
           <div className="text-[10px] text-white/30 uppercase tracking-wider">Balance</div>
-          <div className="text-sm font-bold text-[#FFD700]">${balance.toLocaleString()}</div>
+          <div className="text-sm font-bold text-[#FFD700]">${effectiveBalance.toLocaleString()}</div>
         </div>
       </div>
 
       <div className="max-w-5xl mx-auto px-4 pb-8 space-y-5">
+        {/* Game Error Display */}
+        {gameError && (
+          <div className="text-center text-sm text-red-400 bg-red-400/10 rounded-lg py-2 px-4">
+            {gameError}
+          </div>
+        )}
+
         {/* Pool Banner */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
@@ -462,14 +536,14 @@ export default function LotteryPage() {
                   type="number"
                   value={betAmount}
                   onChange={e => setBetAmount(Math.max(0, Number(e.target.value)))}
-                  disabled={isDrawing}
+                  disabled={isDrawing || gameLoading}
                   className="w-full bg-[#0a0a0f] border border-white/10 rounded-xl px-4 py-2.5 text-white font-mono text-lg focus:outline-none focus:border-[#FFD700]/50 disabled:opacity-50 transition-colors"
                 />
                 <div className="flex gap-1.5 flex-wrap">
                   {presetBets.map(amt => (
                     <button
                       key={amt}
-                      onClick={() => !isDrawing && setBetAmount(amt)}
+                      onClick={() => !isDrawing && !gameLoading && setBetAmount(amt)}
                       className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                         betAmount === amt
                           ? 'bg-[#FFD700] text-black'
@@ -483,11 +557,11 @@ export default function LotteryPage() {
 
                 <button
                   onClick={buyAndDraw}
-                  disabled={selectedNumbers.length !== 6 || betAmount <= 0 || betAmount > balance || isDrawing || showResult}
+                  disabled={selectedNumbers.length !== 6 || betAmount <= 0 || betAmount > effectiveBalance || isDrawing || showResult || gameLoading}
                   className="w-full py-4 text-lg font-bold rounded-xl transition-all cursor-pointer select-none bg-gradient-to-r from-[#c9a227] to-[#e6c84a] text-black hover:shadow-[0_0_30px_rgba(255,215,0,0.3)] active:scale-[0.97] disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-none flex items-center justify-center gap-2"
                 >
                   <Ticket className="w-5 h-5" />
-                  {isDrawing ? 'DRAWING...' : 'BUY TICKET & DRAW'}
+                  {isDrawing ? 'DRAWING...' : gameLoading ? 'PROCESSING...' : 'BUY TICKET & DRAW'}
                 </button>
 
                 {selectedNumbers.length > 0 && selectedNumbers.length < 6 && (

@@ -6,6 +6,9 @@ import { ArrowLeft, TrendingUp, TrendingDown } from 'lucide-react'
 import Link from 'next/link'
 import BetControls from '@/components/ui/BetControls'
 import { roll, calculateMultiplier, checkWin } from '@/lib/games/dice'
+import { useAuth } from '@/hooks/useAuth'
+import { useBalance } from '@/hooks/useBalance'
+import { useGame } from '@/hooks/useGame'
 
 interface RollEntry {
   value: number
@@ -13,7 +16,16 @@ interface RollEntry {
 }
 
 export default function DicePage() {
-  const [balance, setBalance] = useState(10000)
+  const { user, loading: authLoading } = useAuth()
+  const { balance: serverBalance, setBalanceFromApi } = useBalance(user?.id)
+  const { placeBet: placeBetApi, loading: gameLoading, error: gameError } = useGame((newBalance) => {
+    setBalanceFromApi(newBalance)
+  })
+
+  const [demoBalance, setDemoBalance] = useState(10000)
+  const balance = user ? serverBalance : demoBalance
+  const isDemo = !user && !authLoading
+
   const [betAmount, setBetAmount] = useState(100)
   const [target, setTarget] = useState(50)
   const [isOver, setIsOver] = useState(true)
@@ -31,43 +43,113 @@ export default function DicePage() {
     return () => { if (animRef.current) cancelAnimationFrame(animRef.current) }
   }, [])
 
-  const handleRoll = useCallback(() => {
+  const handleRoll = useCallback(async () => {
     if (rolling || betAmount > balance || betAmount <= 0) return
 
-    setBalance(prev => prev - betAmount)
     setRolling(true)
     setLastWon(null)
 
-    const rng = Math.random()
-    const finalValue = roll(rng)
-    const won = checkWin(finalValue, target, isOver)
-    const start = performance.now()
-    const duration = 1000
+    if (isDemo) {
+      // Demo mode: client-side RNG
+      setDemoBalance(prev => prev - betAmount)
+      const rng = Math.random()
+      const finalValue = roll(rng)
+      const won = checkWin(finalValue, target, isOver)
+      const start = performance.now()
+      const duration = 1000
 
-    const tick = (now: number) => {
-      const elapsed = now - start
-      const progress = Math.min(elapsed / duration, 1)
+      const tick = (now: number) => {
+        const elapsed = now - start
+        const progress = Math.min(elapsed / duration, 1)
 
-      if (progress < 1) {
-        setRollResult(parseFloat((Math.random() * 100).toFixed(2)))
-        animRef.current = requestAnimationFrame(tick)
-      } else {
-        setRollResult(finalValue)
-        setRolling(false)
-        setLastWon(won)
-        if (won) {
-          const payout = Math.floor(betAmount * multiplier * 100) / 100
-          setBalance(prev => prev + payout)
+        if (progress < 1) {
+          setRollResult(parseFloat((Math.random() * 100).toFixed(2)))
+          animRef.current = requestAnimationFrame(tick)
+        } else {
+          setRollResult(finalValue)
+          setRolling(false)
+          setLastWon(won)
+          if (won) {
+            const payout = Math.floor(betAmount * multiplier * 100) / 100
+            setDemoBalance(prev => prev + payout)
+          }
+          setHistory(prev => [{ value: finalValue, won }, ...prev].slice(0, 10))
         }
-        setHistory(prev => [{ value: finalValue, won }, ...prev].slice(0, 10))
+      }
+
+      animRef.current = requestAnimationFrame(tick)
+    } else {
+      // Real mode: server-side API
+      // Start animation loop immediately
+      const start = performance.now()
+      const duration = 1000
+      let resolved = false
+      let serverResult: { roll: number; won: boolean } | null = null
+
+      const tick = (now: number) => {
+        const elapsed = now - start
+        const progress = Math.min(elapsed / duration, 1)
+
+        if (progress < 1 || !resolved) {
+          setRollResult(parseFloat((Math.random() * 100).toFixed(2)))
+          animRef.current = requestAnimationFrame(tick)
+        } else if (serverResult) {
+          setRollResult(serverResult.roll)
+          setRolling(false)
+          setLastWon(serverResult.won)
+          setHistory(prev => [{ value: serverResult!.roll, won: serverResult!.won }, ...prev].slice(0, 10))
+        }
+      }
+
+      animRef.current = requestAnimationFrame(tick)
+
+      // Fire the API call
+      const apiResult = await placeBetApi({
+        gameType: 'dice',
+        betAmount,
+        action: 'roll',
+        gameData: { target, isOver },
+      })
+
+      if (apiResult) {
+        const resultData = apiResult.result as { roll: number; won: boolean }
+        serverResult = resultData
+        // If animation is already past duration, resolve immediately
+        const elapsed = performance.now() - start
+        if (elapsed >= duration) {
+          resolved = true
+          setRollResult(resultData.roll)
+          setRolling(false)
+          setLastWon(resultData.won)
+          setHistory(prev => [{ value: resultData.roll, won: resultData.won }, ...prev].slice(0, 10))
+          if (animRef.current) cancelAnimationFrame(animRef.current)
+        } else {
+          resolved = true
+        }
+      } else {
+        // API error — stop rolling
+        setRolling(false)
+        if (animRef.current) cancelAnimationFrame(animRef.current)
       }
     }
-
-    animRef.current = requestAnimationFrame(tick)
-  }, [rolling, betAmount, balance, target, isOver, multiplier])
+  }, [rolling, betAmount, balance, target, isOver, multiplier, isDemo, placeBetApi])
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-white">
+      {/* Demo Mode Banner */}
+      {isDemo && (
+        <div className="bg-yellow-500/90 text-black text-center py-2 text-sm font-bold">
+          DEMO MODE — Sign up to play for real
+        </div>
+      )}
+
+      {/* Error Banner */}
+      {gameError && (
+        <div className="bg-red-500/90 text-white text-center py-2 text-sm font-bold">
+          {gameError}
+        </div>
+      )}
+
       {/* Top Bar */}
       <div className="max-w-4xl mx-auto px-4 pt-4 pb-2 flex items-center justify-between">
         <Link href="/" className="flex items-center gap-2 text-white/50 hover:text-white transition-colors">
@@ -251,7 +333,7 @@ export default function DicePage() {
           betAmount={betAmount}
           onBetChange={setBetAmount}
           onPlay={handleRoll}
-          disabled={rolling}
+          disabled={rolling || gameLoading}
           multiplier={multiplier}
           playLabel={rolling ? 'ROLLING...' : 'ROLL'}
         />

@@ -6,9 +6,12 @@ import { ArrowLeft } from 'lucide-react'
 import Link from 'next/link'
 import BetControls from '@/components/ui/BetControls'
 import { HAND_RANKINGS, createFullDeck, deal, evaluateHand, redraw } from '@/lib/games/poker'
+import { useAuth } from '@/hooks/useAuth'
+import { useBalance } from '@/hooks/useBalance'
+import { useGame } from '@/hooks/useGame'
 import type { BlackjackCard } from '@/lib/types'
 
-/* ─── card image helpers ─── */
+/* --- card image helpers --- */
 function getCardImage(card: { suit: string; rank: string }): string {
   const suitMap: Record<string, number> = { 'clubs': 1, 'diamonds': 2, 'hearts': 3, 'spades': 4 }
   const rankMap: Record<string, number> = { 'A': 14, 'K': 13, 'Q': 12, 'J': 11, '10': 10, '9': 9, '8': 8, '7': 7, '6': 6, '5': 5, '4': 4, '3': 3, '2': 2 }
@@ -100,7 +103,17 @@ function CardVisual({
 }
 
 export default function PokerPage() {
-  const [balance, setBalance] = useState(10000)
+  const { user, loading: authLoading } = useAuth()
+  const { balance, setBalanceFromApi } = useBalance(user?.id)
+  const { placeBet, gameAction, loading: gameLoading, error: gameError } = useGame((newBalance) => {
+    setBalanceFromApi(newBalance)
+  })
+
+  // Demo mode fallback
+  const isDemo = !user && !authLoading
+  const [demoBalance, setDemoBalance] = useState(10000)
+  const effectiveBalance = isDemo ? demoBalance : balance
+
   const [betAmount, setBetAmount] = useState(100)
   const [phase, setPhase] = useState<Phase>('betting')
   const [hand, setHand] = useState<BlackjackCard[]>([])
@@ -109,21 +122,40 @@ export default function PokerPage() {
   const [handRank, setHandRank] = useState(HAND_RANKINGS[HAND_RANKINGS.length - 1])
   const [payout, setPayout] = useState(0)
 
-  const handleDeal = useCallback(() => {
-    if (betAmount > balance || betAmount <= 0) return
+  const handleDeal = useCallback(async () => {
+    if (betAmount > effectiveBalance || betAmount <= 0) return
 
-    setBalance(prev => prev - betAmount)
+    if (isDemo) {
+      // Demo mode: fully client-side
+      setDemoBalance(prev => prev - betAmount)
+      setPayout(0)
+
+      const newDeck = createFullDeck()
+      const result = deal(newDeck)
+
+      setHand(result.hand)
+      setDeck(result.deck)
+      setHoldMask([false, false, false, false, false])
+      setHandRank(evaluateHand(result.hand))
+      setPhase('dealt')
+      return
+    }
+
+    // Server mode: place bet via API
     setPayout(0)
+    const result = await placeBet({ gameType: 'poker', betAmount, action: 'bet', gameData: {} })
+    if (!result) return
 
+    // Use client-side deal for card display (server deducted the bet)
     const newDeck = createFullDeck()
-    const result = deal(newDeck)
+    const dealResult = deal(newDeck)
 
-    setHand(result.hand)
-    setDeck(result.deck)
+    setHand(dealResult.hand)
+    setDeck(dealResult.deck)
     setHoldMask([false, false, false, false, false])
-    setHandRank(evaluateHand(result.hand))
+    setHandRank(evaluateHand(dealResult.hand))
     setPhase('dealt')
-  }, [betAmount, balance])
+  }, [betAmount, effectiveBalance, isDemo, placeBet])
 
   const toggleHold = useCallback((index: number) => {
     if (phase !== 'dealt') return
@@ -134,7 +166,7 @@ export default function PokerPage() {
     })
   }, [phase])
 
-  const handleDraw = useCallback(() => {
+  const handleDraw = useCallback(async () => {
     if (phase !== 'dealt') return
 
     const result = redraw(hand, holdMask, deck)
@@ -147,12 +179,26 @@ export default function PokerPage() {
     const winPayout = evaluation.payout * betAmount
     setPayout(winPayout)
 
-    if (winPayout > 0) {
-      setBalance(prev => prev + winPayout)
+    if (isDemo) {
+      if (winPayout > 0) {
+        setDemoBalance(prev => prev + winPayout)
+      }
+    } else {
+      // Settle via server: send the final hand evaluation
+      const settleResult = await gameAction('settle', {
+        held: holdMask,
+        handName: evaluation.name,
+        multiplier: evaluation.payout,
+      })
+      // If settle fails, the payout display still shows what was evaluated client-side
+      // but the balance will be updated from the server response
+      if (settleResult) {
+        setPayout(settleResult.payout)
+      }
     }
 
     setPhase('result')
-  }, [phase, hand, holdMask, deck, betAmount])
+  }, [phase, hand, holdMask, deck, betAmount, isDemo, gameAction])
 
   const handleNewGame = useCallback(() => {
     setPhase('betting')
@@ -174,6 +220,13 @@ export default function PokerPage() {
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-white">
+      {/* Demo Mode Banner */}
+      {isDemo && (
+        <div className="bg-yellow-500/90 text-black text-center text-xs font-bold py-1.5 px-4">
+          DEMO MODE — Sign up to play for real
+        </div>
+      )}
+
       {/* Top Bar */}
       <div className="max-w-4xl mx-auto px-4 pt-4 pb-2 flex items-center justify-between">
         <Link href="/" className="flex items-center gap-2 text-white/50 hover:text-white transition-colors">
@@ -288,15 +341,23 @@ export default function PokerPage() {
           </AnimatePresence>
         </div>
 
+        {/* Game Error Display */}
+        {gameError && (
+          <div className="text-center text-sm text-red-400 bg-red-400/10 rounded-lg py-2 px-4">
+            {gameError}
+          </div>
+        )}
+
         {/* Action Buttons for dealt/result phases */}
         {phase === 'dealt' && (
           <motion.button
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             onClick={handleDraw}
-            className="w-full py-4 text-xl font-black rounded-xl bg-gradient-to-r from-[#8B5CF6] to-[#a78bfa] text-white shadow-[0_0_30px_rgba(139,92,246,0.3)] hover:shadow-[0_0_40px_rgba(139,92,246,0.5)] transition-shadow cursor-pointer"
+            disabled={gameLoading}
+            className="w-full py-4 text-xl font-black rounded-xl bg-gradient-to-r from-[#8B5CF6] to-[#a78bfa] text-white shadow-[0_0_30px_rgba(139,92,246,0.3)] hover:shadow-[0_0_40px_rgba(139,92,246,0.5)] transition-shadow cursor-pointer disabled:opacity-50"
           >
-            DRAW
+            {gameLoading ? 'DRAWING...' : 'DRAW'}
           </motion.button>
         )}
 
@@ -314,11 +375,11 @@ export default function PokerPage() {
         {/* Bet Controls - betting phase only */}
         {isBetting && (
           <BetControls
-            balance={balance}
+            balance={effectiveBalance}
             betAmount={betAmount}
             onBetChange={setBetAmount}
             onPlay={handleDeal}
-            disabled={false}
+            disabled={gameLoading}
             playLabel="DEAL"
           />
         )}

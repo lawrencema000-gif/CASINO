@@ -15,8 +15,15 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Admin check (placeholder — hardcoded email)
-    if (user.email !== "admin@fortuna.casino") {
+    // Admin check: role column (if exists) or fallback to email
+    const { data: adminProfile } = await supabaseAdmin
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .single();
+    const isAdmin =
+      adminProfile?.role === "admin" || user.email === "admin@fortuna.casino";
+    if (!isAdmin) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 

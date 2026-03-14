@@ -1,21 +1,17 @@
 import type { PlinkoResult } from '@/lib/types'
 
 // ---------------------------------------------------------------------------
-// Multipliers for 16 rows (17 buckets)
+// Multipliers for 16 rows (17 buckets) — 3 risk levels
+// Expected value per $1 ≈ $0.97-0.99 (1-3% house edge)
 // ---------------------------------------------------------------------------
 
-// Center-weighted multipliers from Solana contract
-// Formula: max(1, 1000 - (distance * 500 / maxDistance))
-// 17 buckets for 16 rows, center (bucket 8) = 1000x, edges = 1x
-export const PLINKO_MULTIPLIERS: number[] = (() => {
-  const buckets = 17
-  const center = Math.floor(buckets / 2) // 8
-  const maxDistance = center // 8
-  return Array.from({ length: buckets }, (_, i) => {
-    const distance = Math.abs(i - center)
-    return Math.max(1, Math.round(1000 - (distance * 500 / maxDistance)))
-  })
-})()
+export type PlinkoRisk = 'low' | 'medium' | 'high'
+
+export const PLINKO_MULTIPLIERS: Record<PlinkoRisk, number[]> = {
+  low:    [5.6, 2.1, 1.4, 1.1, 1, 0.5, 0.3, 0.3, 0.3, 0.3, 0.3, 0.5, 1, 1.1, 1.4, 2.1, 5.6],
+  medium: [13, 3, 1.9, 1.3, 0.7, 0.4, 0.2, 0.2, 0.2, 0.2, 0.2, 0.4, 0.7, 1.3, 1.9, 3, 13],
+  high:   [110, 41, 10, 5, 3, 1.5, 0.5, 0.3, 0.2, 0.3, 0.5, 1.5, 3, 5, 10, 41, 110],
+}
 
 export const PLINKO_ROWS = 16
 
@@ -38,11 +34,8 @@ function deriveRng(base: number, index: number): number {
  * Drop a ball through the Plinko board.
  * Each of the 16 rows, the ball goes left (0) or right (1).
  * The final bucket index is the count of right moves (0 to 16).
- *
- * @param rngValue - A float 0-1 from the provably fair system
- * @returns PlinkoResult with path, multiplier, payout, and bucket
  */
-export function drop(rngValue: number, bet: number = 0): PlinkoResult {
+export function drop(rngValue: number, bet: number = 0, risk: PlinkoRisk = 'medium'): PlinkoResult {
   const path: number[] = []
   let position = 0
 
@@ -54,7 +47,8 @@ export function drop(rngValue: number, bet: number = 0): PlinkoResult {
   }
 
   const bucket = position
-  const multiplier = PLINKO_MULTIPLIERS[bucket] ?? 0.3
+  const multipliers = PLINKO_MULTIPLIERS[risk]
+  const multiplier = multipliers[bucket] ?? 0.2
   const payout = Math.floor(bet * multiplier * 100) / 100
 
   return {

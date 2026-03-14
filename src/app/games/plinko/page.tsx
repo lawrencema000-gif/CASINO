@@ -5,7 +5,10 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowLeft } from 'lucide-react'
 import Link from 'next/link'
 import BetControls from '@/components/ui/BetControls'
-import { PLINKO_MULTIPLIERS, PLINKO_ROWS, drop } from '@/lib/games/plinko'
+import { PLINKO_MULTIPLIERS, PLINKO_ROWS, drop, type PlinkoRisk } from '@/lib/games/plinko'
+import { useAuth } from '@/hooks/useAuth'
+import { useBalance } from '@/hooks/useBalance'
+import { useGame } from '@/hooks/useGame'
 
 interface ActiveBall {
   id: number
@@ -34,28 +37,33 @@ function getBucketTextColor(mult: number): string {
 }
 
 export default function PlinkoPage() {
-  const [balance, setBalance] = useState(10000)
+  const { user, loading: authLoading } = useAuth()
+  const { balance, setBalanceFromApi } = useBalance(user?.id)
+  const { placeBet, loading: gameLoading, error: gameError } = useGame((newBalance) => {
+    setBalanceFromApi(newBalance)
+  })
+
+  // Demo mode balance (used when not logged in)
+  const [demoBalance, setDemoBalance] = useState(10000)
+  const isDemo = !user && !authLoading
+
+  // Effective balance: server balance when logged in, demo balance otherwise
+  const effectiveBalance = isDemo ? demoBalance : balance
+
   const [betAmount, setBetAmount] = useState(100)
+  const [risk, setRisk] = useState<PlinkoRisk>('medium')
   const [balls, setBalls] = useState<ActiveBall[]>([])
   const [lastWin, setLastWin] = useState<{ multiplier: number; payout: number } | null>(null)
   const [litBucket, setLitBucket] = useState<number | null>(null)
   const ballIdRef = useRef(0)
 
-  const dropBall = useCallback(() => {
-    if (betAmount > balance || betAmount <= 0) return
-
-    setBalance(prev => prev - betAmount)
-
-    const rng = Math.random()
-    const result = drop(rng, betAmount)
-    const id = ++ballIdRef.current
-
+  const animateBall = useCallback((id: number, path: number[], bucket: number, multiplier: number, payout: number) => {
     const newBall: ActiveBall = {
       id,
-      path: result.path,
-      bucket: result.bucket,
-      multiplier: result.multiplier,
-      payout: result.payout,
+      path,
+      bucket,
+      multiplier,
+      payout,
       currentRow: -1,
       done: false,
     }
@@ -68,13 +76,12 @@ export default function PlinkoPage() {
       if (row >= PLINKO_ROWS) {
         clearInterval(interval)
         setBalls(prev => prev.map(b => b.id === id ? { ...b, done: true, currentRow: PLINKO_ROWS } : b))
-        setLastWin({ multiplier: result.multiplier, payout: result.payout })
-        setLitBucket(result.bucket)
-        setBalance(prev => prev + result.payout)
+        setLastWin({ multiplier, payout })
+        setLitBucket(bucket)
 
         // Clear lit bucket and remove ball after delay
         setTimeout(() => {
-          setLitBucket(prev => prev === result.bucket ? null : prev)
+          setLitBucket(prev => prev === bucket ? null : prev)
           setBalls(prev => prev.filter(b => b.id !== id))
         }, 2000)
         return
@@ -82,7 +89,35 @@ export default function PlinkoPage() {
       setBalls(prev => prev.map(b => b.id === id ? { ...b, currentRow: row } : b))
       row++
     }, 80)
-  }, [betAmount, balance])
+  }, [])
+
+  const dropBall = useCallback(async () => {
+    if (betAmount > effectiveBalance || betAmount <= 0) return
+
+    const id = ++ballIdRef.current
+
+    if (isDemo) {
+      // Demo mode: client-side logic
+      setDemoBalance(prev => prev - betAmount)
+
+      const rng = Math.random()
+      const result = drop(rng, betAmount, risk)
+
+      animateBall(id, result.path, result.bucket, result.multiplier, result.payout)
+
+      // Add payout after animation completes
+      setTimeout(() => {
+        setDemoBalance(prev => prev + result.payout)
+      }, PLINKO_ROWS * 80)
+    } else {
+      // Server mode: call API
+      const result = await placeBet({ gameType: 'plinko', betAmount, action: 'bet', gameData: { risk } })
+      if (!result) return // API error
+
+      const serverResult = result.result as { path: number[]; bucket: number; risk: string }
+      animateBall(id, serverResult.path, serverResult.bucket, result.multiplier, result.payout)
+    }
+  }, [betAmount, effectiveBalance, isDemo, risk, placeBet, animateBall])
 
   // Calculate ball position from path
   const getBallPosition = (ball: ActiveBall) => {
@@ -108,8 +143,17 @@ export default function PlinkoPage() {
     return { x: xPercent, y: yPercent }
   }
 
+  const currentMultipliers = PLINKO_MULTIPLIERS[risk]
+
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-white">
+      {/* Demo Mode Banner */}
+      {isDemo && (
+        <div className="bg-yellow-500/90 text-black text-center py-2 text-sm font-bold">
+          DEMO MODE — Sign up to play for real
+        </div>
+      )}
+
       {/* Top Bar */}
       <div className="max-w-4xl mx-auto px-4 pt-4 pb-2 flex items-center justify-between">
         <Link href="/" className="flex items-center gap-2 text-white/50 hover:text-white transition-colors">
@@ -124,6 +168,35 @@ export default function PlinkoPage() {
       </div>
 
       <div className="max-w-4xl mx-auto px-4 pb-8 space-y-6">
+        {/* Error Display */}
+        {gameError && (
+          <div className="bg-red-500/20 border border-red-500/50 rounded-lg px-4 py-2 text-red-400 text-sm text-center">
+            {gameError}
+          </div>
+        )}
+
+        {/* Risk Selector */}
+        <div className="flex items-center justify-center gap-2">
+          <span className="text-sm text-white/40 mr-2">Risk:</span>
+          {(['low', 'medium', 'high'] as PlinkoRisk[]).map((r) => (
+            <button
+              key={r}
+              onClick={() => setRisk(r)}
+              className={`px-4 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer ${
+                risk === r
+                  ? r === 'low'
+                    ? 'bg-[#00FF88]/20 text-[#00FF88] border border-[#00FF88]/50'
+                    : r === 'medium'
+                    ? 'bg-[#FFD700]/20 text-[#FFD700] border border-[#FFD700]/50'
+                    : 'bg-[#EF4444]/20 text-[#EF4444] border border-[#EF4444]/50'
+                  : 'bg-[#1a1a25] text-white/40 border border-white/5 hover:border-white/20'
+              }`}
+            >
+              {r.charAt(0).toUpperCase() + r.slice(1)}
+            </button>
+          ))}
+        </div>
+
         {/* Last Win */}
         <AnimatePresence>
           {lastWin && (
@@ -192,7 +265,7 @@ export default function PlinkoPage() {
 
             {/* Buckets at bottom */}
             <div className="absolute bottom-0 left-[5%] right-[5%] flex gap-[1px]">
-              {PLINKO_MULTIPLIERS.map((mult, i) => (
+              {currentMultipliers.map((mult, i) => (
                 <motion.div
                   key={i}
                   className={`flex-1 py-1 md:py-2 text-center rounded-t-lg font-bold text-[7px] sm:text-[9px] md:text-xs ${getBucketColor(mult)} transition-all duration-300`}
@@ -215,11 +288,11 @@ export default function PlinkoPage() {
 
         {/* Bet Controls */}
         <BetControls
-          balance={balance}
+          balance={effectiveBalance}
           betAmount={betAmount}
           onBetChange={setBetAmount}
           onPlay={dropBall}
-          disabled={false}
+          disabled={gameLoading}
           playLabel="DROP BALL"
         />
       </div>

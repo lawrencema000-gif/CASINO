@@ -371,7 +371,7 @@ function generateGameResult(
     }
 
     case "plinko": {
-      const rows = (gameData.rows as number) || 16;
+      const rows = 16;
       const risk = (gameData.risk as string) || "medium";
       const path: number[] = [];
       let position = 0;
@@ -382,26 +382,25 @@ function generateGameResult(
           .update(`${combinedSeed}:row:${i}`)
           .digest("hex");
         const direction =
-          parseInt(rowHash.substring(0, 8), 16) % 2 === 0 ? -1 : 1;
+          parseInt(rowHash.substring(0, 8), 16) % 2 === 0 ? 0 : 1;
         position += direction;
-        path.push(position);
+        path.push(direction);
       }
 
-      const normalizedPos = Math.abs(position);
+      // position is count of right moves (0 to 16), maps to 17 buckets
+      const bucket = position;
       const multipliers: Record<string, number[]> = {
-        low: [1.5, 1.2, 1.1, 1, 0.5, 0.3, 0.3, 0.5, 1, 1.1, 1.2, 1.5],
-        medium: [5.6, 3, 1.6, 1, 0.7, 0.4, 0.2, 0.4, 0.7, 1, 1.6, 3, 5.6],
-        high: [16, 9, 4, 2, 0.4, 0.2, 0.1, 0.2, 0.4, 2, 4, 9, 16],
+        low:    [5.6, 2.1, 1.4, 1.1, 1, 0.5, 0.3, 0.3, 0.3, 0.3, 0.3, 0.5, 1, 1.1, 1.4, 2.1, 5.6],
+        medium: [13, 3, 1.9, 1.3, 0.7, 0.4, 0.2, 0.2, 0.2, 0.2, 0.2, 0.4, 0.7, 1.3, 1.9, 3, 13],
+        high:   [110, 41, 10, 5, 3, 1.5, 0.5, 0.3, 0.2, 0.3, 0.5, 1.5, 3, 5, 10, 41, 110],
       };
       const riskMultipliers = multipliers[risk] || multipliers.medium;
-      const bucketIndex = Math.min(normalizedPos, riskMultipliers.length - 1);
-      const mult = riskMultipliers[bucketIndex];
+      const mult = riskMultipliers[bucket] ?? 0.2;
 
       return {
         result: {
           path,
-          finalPosition: position,
-          bucket: bucketIndex,
+          bucket,
           risk,
           rows,
         },
@@ -591,8 +590,17 @@ export async function POST(request: NextRequest) {
     const body: GameRequest = await request.json();
     const { gameType, action, betAmount, gameData = {}, demoMode } = body;
 
-    // ---------- Demo mode (no auth required) ----------
+    // ---------- Demo mode (no auth required, blocked for authenticated users) ----------
     if (demoMode) {
+      // Prevent authenticated users from using demo mode to bypass balance
+      const supabaseCheck = await createClient();
+      const { data: { user: authUser } } = await supabaseCheck.auth.getUser();
+      if (authUser) {
+        return NextResponse.json(
+          { error: "Demo mode is not available for logged-in users" },
+          { status: 403 }
+        );
+      }
       if (
         !gameType ||
         !VALID_GAME_TYPES.includes(gameType as ValidGameType)

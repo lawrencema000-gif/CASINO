@@ -7,9 +7,21 @@ import Link from 'next/link'
 import BetControls from '@/components/ui/BetControls'
 import { flip, COINFLIP_MULTIPLIER } from '@/lib/games/coinflip'
 import type { CoinSide } from '@/lib/games/coinflip'
+import { useAuth } from '@/hooks/useAuth'
+import { useBalance } from '@/hooks/useBalance'
+import { useGame } from '@/hooks/useGame'
 
 export default function CoinFlipPage() {
-  const [balance, setBalance] = useState(10000)
+  const { user, loading: authLoading } = useAuth()
+  const { balance: serverBalance, setBalanceFromApi } = useBalance(user?.id)
+  const { placeBet: placeBetApi, loading: gameLoading, error: gameError } = useGame((newBalance) => {
+    setBalanceFromApi(newBalance)
+  })
+
+  const [demoBalance, setDemoBalance] = useState(10000)
+  const balance = user ? serverBalance : demoBalance
+  const isDemo = !user && !authLoading
+
   const [betAmount, setBetAmount] = useState(100)
   const [choice, setChoice] = useState<CoinSide>('heads')
   const [flipping, setFlipping] = useState(false)
@@ -19,39 +31,89 @@ export default function CoinFlipPage() {
   const [streak, setStreak] = useState(0)
   const [streakType, setStreakType] = useState<'win' | 'loss'>('win')
 
-  const handleFlip = useCallback(() => {
+  const handleFlip = useCallback(async () => {
     if (flipping || betAmount > balance || betAmount <= 0) return
 
-    setBalance(prev => prev - betAmount)
     setFlipping(true)
     setLastWon(null)
     setResult(null)
     setFlipKey(k => k + 1)
 
-    const rng = Math.random()
-    const coinResult = flip(rng)
-    const won = coinResult === choice
+    if (isDemo) {
+      // Demo mode: client-side RNG
+      setDemoBalance(prev => prev - betAmount)
 
-    // Wait for animation
-    setTimeout(() => {
-      setResult(coinResult)
-      setLastWon(won)
-      setFlipping(false)
+      const rng = Math.random()
+      const coinResult = flip(rng)
+      const won = coinResult === choice
 
-      if (won) {
-        const payout = Math.floor(betAmount * COINFLIP_MULTIPLIER * 100) / 100
-        setBalance(prev => prev + payout)
-        setStreak(prev => streakType === 'win' ? prev + 1 : 1)
-        setStreakType('win')
+      // Wait for animation
+      setTimeout(() => {
+        setResult(coinResult)
+        setLastWon(won)
+        setFlipping(false)
+
+        if (won) {
+          const payout = Math.floor(betAmount * COINFLIP_MULTIPLIER * 100) / 100
+          setDemoBalance(prev => prev + payout)
+          setStreak(prev => streakType === 'win' ? prev + 1 : 1)
+          setStreakType('win')
+        } else {
+          setStreak(prev => streakType === 'loss' ? prev + 1 : 1)
+          setStreakType('loss')
+        }
+      }, 1800)
+    } else {
+      // Real mode: fire API call, wait for animation + result
+      const apiPromise = placeBetApi({
+        gameType: 'coinflip',
+        betAmount,
+        action: 'bet',
+        gameData: { choice },
+      })
+
+      // Wait for both the animation (1800ms) and the API result
+      const [apiResult] = await Promise.all([
+        apiPromise,
+        new Promise(resolve => setTimeout(resolve, 1800)),
+      ])
+
+      if (apiResult) {
+        const resultData = apiResult.result as { coinResult: CoinSide; won: boolean }
+        setResult(resultData.coinResult)
+        setLastWon(resultData.won)
+        setFlipping(false)
+
+        if (resultData.won) {
+          setStreak(prev => streakType === 'win' ? prev + 1 : 1)
+          setStreakType('win')
+        } else {
+          setStreak(prev => streakType === 'loss' ? prev + 1 : 1)
+          setStreakType('loss')
+        }
       } else {
-        setStreak(prev => streakType === 'loss' ? prev + 1 : 1)
-        setStreakType('loss')
+        // API error — stop flipping
+        setFlipping(false)
       }
-    }, 1800)
-  }, [flipping, betAmount, balance, choice, streakType])
+    }
+  }, [flipping, betAmount, balance, choice, streakType, isDemo, placeBetApi])
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-white">
+      {/* Demo Mode Banner */}
+      {isDemo && (
+        <div className="bg-yellow-500/90 text-black text-center py-2 text-sm font-bold">
+          DEMO MODE — Sign up to play for real
+        </div>
+      )}
+
+      {/* Error Banner */}
+      {gameError && (
+        <div className="bg-red-500/90 text-white text-center py-2 text-sm font-bold">
+          {gameError}
+        </div>
+      )}
+
       {/* Top Bar */}
       <div className="max-w-4xl mx-auto px-4 pt-4 pb-2 flex items-center justify-between">
         <Link href="/" className="flex items-center gap-2 text-white/50 hover:text-white transition-colors">
@@ -187,7 +249,7 @@ export default function CoinFlipPage() {
           betAmount={betAmount}
           onBetChange={setBetAmount}
           onPlay={handleFlip}
-          disabled={flipping}
+          disabled={flipping || gameLoading}
           multiplier={COINFLIP_MULTIPLIER}
           playLabel={flipping ? 'FLIPPING...' : 'FLIP COIN'}
         />

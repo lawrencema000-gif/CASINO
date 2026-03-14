@@ -20,7 +20,8 @@ export type GameType =
   | "mines"
   | "keno"
   | "limbo"
-  | "hilo";
+  | "hilo"
+  | "holdem";
 
 export type TransactionType =
   | "deposit"
@@ -28,7 +29,11 @@ export type TransactionType =
   | "bet"
   | "win"
   | "bonus"
-  | "refund";
+  | "refund"
+  | "admin_credit"
+  | "admin_debit";
+
+export type UserRole = "player" | "admin" | "moderator";
 
 export type VipTier =
   | "bronze"

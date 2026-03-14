@@ -4,6 +4,9 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowLeft, Trophy, Users, TrendingUp, Coins, Crown, Zap, RotateCcw, Star } from 'lucide-react'
 import Link from 'next/link'
+import { useAuth } from '@/hooks/useAuth'
+import { useBalance } from '@/hooks/useBalance'
+import { useGame } from '@/hooks/useGame'
 
 interface PoolEntry {
   id: string
@@ -48,7 +51,17 @@ const PAST_WINNERS: WinnerRecord[] = [
 ]
 
 export default function JackpotPage() {
-  const [balance, setBalance] = useState(10000)
+  const { user, loading: authLoading } = useAuth()
+  const { balance, setBalanceFromApi } = useBalance(user?.id)
+  const { placeBet, loading: gameLoading, error: gameError } = useGame((newBalance) => {
+    setBalanceFromApi(newBalance)
+  })
+
+  // Demo mode fallback
+  const isDemo = !user && !authLoading
+  const [demoBalance, setDemoBalance] = useState(10000)
+  const effectiveBalance = isDemo ? demoBalance : balance
+
   const [betAmount, setBetAmount] = useState(500)
   const [entries, setEntries] = useState<PoolEntry[]>(INITIAL_BOTS)
   const [myTotalBet, setMyTotalBet] = useState(0)
@@ -111,10 +124,20 @@ export default function JackpotPage() {
     return () => { if (botRef.current) clearInterval(botRef.current) }
   }, [isSpinning])
 
-  const enterJackpot = useCallback(() => {
-    if (betAmount > balance || betAmount <= 0 || isSpinning) return
+  const enterJackpot = useCallback(async () => {
+    if (betAmount > effectiveBalance || betAmount <= 0 || isSpinning) return
 
-    setBalance(prev => prev - betAmount)
+    if (isDemo) {
+      // Demo mode: client-side only
+      setDemoBalance(prev => prev - betAmount)
+    } else {
+      // Server mode: place bet via API
+      const result = await placeBet({ gameType: 'jackpot', betAmount, action: 'bet', gameData: {} })
+      if (!result) return
+      // The API deducted the balance; check if we won the jackpot
+      // For the visual pool game we still add to the local pool
+    }
+
     const newEntries = Math.ceil(betAmount / 100)
 
     setEntries(prev => {
@@ -139,7 +162,7 @@ export default function JackpotPage() {
     setMyTotalBet(prev => prev + betAmount)
     setMyEntryCount(prev => prev + newEntries)
     setJackpotDisplay(prev => prev + betAmount)
-  }, [betAmount, balance, isSpinning])
+  }, [betAmount, effectiveBalance, isSpinning, isDemo, placeBet])
 
   const drawWinner = useCallback(async () => {
     if (entries.length < 2 || isSpinning) return
@@ -194,7 +217,11 @@ export default function JackpotPage() {
     setIsSpinning(false)
 
     if (winner.isPlayer) {
-      setBalance(prev => prev + prizePool)
+      if (isDemo) {
+        setDemoBalance(prev => prev + prizePool)
+      }
+      // In server mode, the payout was already handled by placeBet if the player won
+      // The visual celebration still shows
       setShowCelebration(true)
       // Generate celebration particles
       setParticles(
@@ -224,12 +251,19 @@ export default function JackpotPage() {
       setMyEntryCount(0)
       setJackpotDisplay(8000 + Math.random() * 5000)
     }, 6000)
-  }, [entries, isSpinning, prizePool])
+  }, [entries, isSpinning, prizePool, isDemo])
 
   const presetBets = [100, 500, 1000, 5000]
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-white">
+      {/* Demo Mode Banner */}
+      {isDemo && (
+        <div className="bg-yellow-500/90 text-black text-center text-xs font-bold py-1.5 px-4">
+          DEMO MODE — Sign up to play for real
+        </div>
+      )}
+
       {/* Full-screen celebration overlay */}
       <AnimatePresence>
         {showCelebration && (
@@ -298,11 +332,18 @@ export default function JackpotPage() {
         </div>
         <div className="text-right">
           <div className="text-[10px] text-white/30 uppercase tracking-wider">Balance</div>
-          <div className="text-sm font-bold text-[#FFD700]">${balance.toLocaleString()}</div>
+          <div className="text-sm font-bold text-[#FFD700]">${effectiveBalance.toLocaleString()}</div>
         </div>
       </div>
 
       <div className="max-w-5xl mx-auto px-4 pb-8 space-y-5">
+        {/* Game Error Display */}
+        {gameError && (
+          <div className="text-center text-sm text-red-400 bg-red-400/10 rounded-lg py-2 px-4">
+            {gameError}
+          </div>
+        )}
+
         {/* Massive Jackpot Counter */}
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
@@ -520,14 +561,14 @@ export default function JackpotPage() {
                   type="number"
                   value={betAmount}
                   onChange={e => setBetAmount(Math.max(0, Number(e.target.value)))}
-                  disabled={isSpinning}
+                  disabled={isSpinning || gameLoading}
                   className="w-full bg-[#0a0a0f] border border-white/10 rounded-xl px-4 py-2.5 text-white font-mono text-lg focus:outline-none focus:border-[#FFD700]/50 disabled:opacity-50 transition-colors"
                 />
                 <div className="flex gap-1.5 flex-wrap">
                   {presetBets.map(amt => (
                     <button
                       key={amt}
-                      onClick={() => !isSpinning && setBetAmount(amt)}
+                      onClick={() => !isSpinning && !gameLoading && setBetAmount(amt)}
                       className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                         betAmount === amt
                           ? 'bg-[#FFD700] text-black'
@@ -546,17 +587,17 @@ export default function JackpotPage() {
 
                 <button
                   onClick={enterJackpot}
-                  disabled={betAmount <= 0 || betAmount > balance || isSpinning}
+                  disabled={betAmount <= 0 || betAmount > effectiveBalance || isSpinning || gameLoading}
                   className="w-full py-4 text-lg font-bold rounded-xl transition-all cursor-pointer select-none bg-gradient-to-r from-[#c9a227] to-[#e6c84a] text-black hover:shadow-[0_0_30px_rgba(255,215,0,0.3)] active:scale-[0.97] disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-none flex items-center justify-center gap-2"
                 >
                   <Coins className="w-5 h-5" />
-                  ENTER JACKPOT
+                  {gameLoading ? 'ENTERING...' : 'ENTER JACKPOT'}
                 </button>
 
                 {/* Draw button */}
                 <button
                   onClick={drawWinner}
-                  disabled={entries.length < 2 || isSpinning || myTotalBet <= 0}
+                  disabled={entries.length < 2 || isSpinning || myTotalBet <= 0 || gameLoading}
                   className="w-full py-3 text-sm font-bold rounded-xl transition-all cursor-pointer select-none bg-gradient-to-r from-[#8B5CF6] to-[#6c2bd9] text-white hover:shadow-[0_0_20px_rgba(139,92,246,0.3)] active:scale-[0.97] disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-none flex items-center justify-center gap-2"
                 >
                   <Zap className="w-4 h-4" />

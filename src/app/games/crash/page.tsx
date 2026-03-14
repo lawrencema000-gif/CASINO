@@ -6,6 +6,9 @@ import { ArrowLeft } from 'lucide-react'
 import Link from 'next/link'
 import BetControls from '@/components/ui/BetControls'
 import { generateCrashPoint, tick } from '@/lib/games/crash'
+import { useAuth } from '@/hooks/useAuth'
+import { useBalance } from '@/hooks/useBalance'
+import { useGame } from '@/hooks/useGame'
 
 type Phase = 'betting' | 'countdown' | 'running' | 'crashed' | 'cashedOut'
 
@@ -14,7 +17,19 @@ interface CrashHistory {
 }
 
 export default function CrashPage() {
-  const [balance, setBalance] = useState(10000)
+  const { user, loading: authLoading } = useAuth()
+  const { balance, setBalanceFromApi } = useBalance(user?.id)
+  const { placeBet, gameAction, loading: gameLoading, error: gameError } = useGame((newBalance) => {
+    setBalanceFromApi(newBalance)
+  })
+
+  // Demo mode balance (used when not logged in)
+  const [demoBalance, setDemoBalance] = useState(10000)
+  const isDemo = !user && !authLoading
+
+  // Effective balance: server balance when logged in, demo balance otherwise
+  const effectiveBalance = isDemo ? demoBalance : balance
+
   const [betAmount, setBetAmount] = useState(100)
   const [phase, setPhase] = useState<Phase>('betting')
   const [currentMultiplier, setCurrentMultiplier] = useState(1)
@@ -31,18 +46,11 @@ export default function CrashPage() {
   const cashedOutRef = useRef(false)
   const betAmountRef = useRef(0)
   const autoCashOutRef = useRef(2)
+  const gameIdRef = useRef<string | null>(null)
 
   useEffect(() => { autoCashOutRef.current = autoCashOut }, [autoCashOut])
 
-  const startGame = useCallback(() => {
-    if (betAmount > balance || betAmount <= 0) return
-
-    setBalance(prev => prev - betAmount)
-    betAmountRef.current = betAmount
-    cashedOutRef.current = false
-    setCashOutAt(null)
-
-    const cp = generateCrashPoint(Math.random())
+  const runGameAnimation = useCallback((cp: number) => {
     setCrashPoint(cp)
     crashPointRef.current = cp
 
@@ -78,8 +86,13 @@ export default function CrashPage() {
             cashedOutRef.current = true
             setCashOutAt(m)
             setPhase('cashedOut')
-            const payout = Math.floor(betAmountRef.current * m * 100) / 100
-            setBalance(prev => prev + payout)
+            if (isDemo) {
+              const payout = Math.floor(betAmountRef.current * m * 100) / 100
+              setDemoBalance(prev => prev + payout)
+            } else {
+              // Server-side cash out
+              gameAction('cashout', { multiplier: m })
+            }
           }
 
           setCurrentMultiplier(m)
@@ -94,22 +107,53 @@ export default function CrashPage() {
         animRef.current = requestAnimationFrame(gameLoop)
       }
     }, 1000)
-  }, [betAmount, balance])
+  }, [isDemo, gameAction])
 
-  const handleCashOut = useCallback(() => {
+  const startGame = useCallback(async () => {
+    if (betAmount > effectiveBalance || betAmount <= 0) return
+
+    betAmountRef.current = betAmount
+    cashedOutRef.current = false
+    setCashOutAt(null)
+
+    if (isDemo) {
+      // Demo mode: client-side logic
+      setDemoBalance(prev => prev - betAmount)
+      const cp = generateCrashPoint(Math.random())
+      runGameAnimation(cp)
+    } else {
+      // Server mode: call API
+      const result = await placeBet({ gameType: 'crash', betAmount, action: 'bet', gameData: {} })
+      if (!result) return // API error
+
+      gameIdRef.current = result.gameId
+      const serverResult = result.result as { crashPoint: number; phase?: string }
+      const cp = serverResult.crashPoint
+      runGameAnimation(cp)
+    }
+  }, [betAmount, effectiveBalance, isDemo, placeBet, runGameAnimation])
+
+  const handleCashOut = useCallback(async () => {
     if (phase !== 'running' || cashedOutRef.current) return
     cashedOutRef.current = true
     setCashOutAt(currentMultiplier)
     setPhase('cashedOut')
-    const payout = Math.floor(betAmountRef.current * currentMultiplier * 100) / 100
-    setBalance(prev => prev + payout)
-  }, [phase, currentMultiplier])
+
+    if (isDemo) {
+      const payout = Math.floor(betAmountRef.current * currentMultiplier * 100) / 100
+      setDemoBalance(prev => prev + payout)
+    } else {
+      // Server-side cash out settles the game and returns balanceAfter
+      await gameAction('cashout', { multiplier: currentMultiplier })
+    }
+  }, [phase, currentMultiplier, isDemo, gameAction])
 
   const handleNewRound = useCallback(() => {
     setPhase('betting')
     setCashOutAt(null)
     setCurrentMultiplier(1)
     setGraphPoints([])
+    gameIdRef.current = null
     if (animRef.current) cancelAnimationFrame(animRef.current)
   }, [])
 
@@ -140,6 +184,13 @@ export default function CrashPage() {
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-white">
+      {/* Demo Mode Banner */}
+      {isDemo && (
+        <div className="bg-yellow-500/90 text-black text-center py-2 text-sm font-bold">
+          DEMO MODE — Sign up to play for real
+        </div>
+      )}
+
       {/* Top Bar */}
       <div className="max-w-4xl mx-auto px-4 pt-4 pb-2 flex items-center justify-between">
         <Link href="/" className="flex items-center gap-2 text-white/50 hover:text-white transition-colors">
@@ -154,6 +205,13 @@ export default function CrashPage() {
       </div>
 
       <div className="max-w-4xl mx-auto px-4 pb-8 space-y-6">
+        {/* Error Display */}
+        {gameError && (
+          <div className="bg-red-500/20 border border-red-500/50 rounded-lg px-4 py-2 text-red-400 text-sm text-center">
+            {gameError}
+          </div>
+        )}
+
         {/* Graph Area */}
         <div className={`relative rounded-2xl bg-[#1a1a25] border overflow-hidden transition-all duration-300 ${
           isCrashed ? 'border-[#EF4444]/50' : isCashedOut ? 'border-[#00FF88]/50' : 'border-white/5'
@@ -330,11 +388,11 @@ export default function CrashPage() {
         {/* Bet Controls - betting phase only */}
         {isBetting && (
           <BetControls
-            balance={balance}
+            balance={effectiveBalance}
             betAmount={betAmount}
             onBetChange={setBetAmount}
             onPlay={startGame}
-            disabled={false}
+            disabled={gameLoading}
             playLabel="START ROUND"
           />
         )}

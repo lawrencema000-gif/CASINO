@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, RotateCcw, Trash2, Volume2, VolumeX } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { useBalance } from "@/hooks/useBalance";
+import { useGame } from "@/hooks/useGame";
 import {
   ROULETTE_NUMBERS,
   spin as spinWheel,
@@ -58,11 +59,15 @@ interface PlacedBet {
 
 /* ─── main component ─── */
 export default function RoulettePage() {
-  const { user } = useAuth();
-  const { balance: serverBalance, refreshBalance } = useBalance(user?.id);
+  const { user, loading: authLoading } = useAuth();
+  const { balance: serverBalance, setBalanceFromApi } = useBalance(user?.id);
+  const { placeBet: placeBetApi, loading: gameLoading, error: gameError } = useGame((newBalance) => {
+    setBalanceFromApi(newBalance);
+  });
 
   const [demoBalance, setDemoBalance] = useState(10000);
   const balance = user ? serverBalance : demoBalance;
+  const isDemo = !user && !authLoading;
 
   const [phase, setPhase] = useState<GamePhase>("betting");
   const [chipValue, setChipValue] = useState(100);
@@ -118,59 +123,131 @@ export default function RoulettePage() {
   const handleSpin = useCallback(async () => {
     if (phase !== "betting" || placedBets.length === 0) return;
 
-    /* deduct total bet */
-    if (!user) setDemoBalance((b) => b - totalBet);
-
     setPhase("spinning");
     setResult(null);
     setWinningBetIds(new Set());
     setTotalWin(0);
 
-    /* animate wheel */
-    const rng = Math.random();
-    const winNumber = spinWheel(rng);
-    const winIdx = WHEEL_ORDER.indexOf(winNumber.number);
-    const slotAngle = (winIdx / 37) * 360;
-    const spins = 5 + Math.random() * 3;
-    const finalRotation = wheelRotation + spins * 360;
-    const finalBall = -(spins * 360 + slotAngle + 180);
+    if (isDemo) {
+      // Demo mode: client-side RNG
+      setDemoBalance((b) => b - totalBet);
 
-    setWheelRotation(finalRotation);
-    setBallAngle(finalBall);
+      const rng = Math.random();
+      const winNumber = spinWheel(rng);
+      const winIdx = WHEEL_ORDER.indexOf(winNumber.number);
+      const slotAngle = (winIdx / 37) * 360;
+      const spins = 5 + Math.random() * 3;
+      const finalRotation = wheelRotation + spins * 360;
+      const finalBall = -(spins * 360 + slotAngle + 180);
 
-    /* wait for animation */
-    await new Promise((r) => setTimeout(r, 4000));
+      setWheelRotation(finalRotation);
+      setBallAngle(finalBall);
 
-    setResult(winNumber);
-    setHistory((prev) => [winNumber, ...prev.slice(0, 9)]);
+      await new Promise((r) => setTimeout(r, 4000));
 
-    /* calculate payouts */
-    let winTotal = 0;
-    const winIds = new Set<string>();
+      setResult(winNumber);
+      setHistory((prev) => [winNumber, ...prev.slice(0, 9)]);
 
-    for (const bet of placedBets) {
-      const rBet: RouletteBet = {
-        type: bet.type,
-        value: bet.value,
-        amount: bet.amount,
-        payout: 0,
-      };
-      const payout = calculateBetPayout(rBet, winNumber);
-      if (payout > 0) {
-        winTotal += payout;
-        winIds.add(bet.id);
+      let winTotal = 0;
+      const winIds = new Set<string>();
+
+      for (const bet of placedBets) {
+        const rBet: RouletteBet = {
+          type: bet.type,
+          value: bet.value,
+          amount: bet.amount,
+          payout: 0,
+        };
+        const payout = calculateBetPayout(rBet, winNumber);
+        if (payout > 0) {
+          winTotal += payout;
+          winIds.add(bet.id);
+        }
+      }
+
+      setWinningBetIds(winIds);
+      setTotalWin(winTotal);
+
+      if (winTotal > 0) {
+        setDemoBalance((b) => b + winTotal);
+      }
+
+      setPhase("result");
+    } else {
+      // Real mode: use server API
+      // Determine primary bet type (first bet's type) and bet number for the API
+      const primaryBet = placedBets[0];
+
+      // Animate wheel with a placeholder spin while we wait for API
+      const spins = 5 + Math.random() * 3;
+
+      // Fire API call alongside animation
+      const apiPromise = placeBetApi({
+        gameType: 'roulette',
+        betAmount: totalBet,
+        action: 'bet',
+        gameData: {
+          betType: primaryBet.type,
+          betNumber: primaryBet.value,
+          bets: placedBets.map(b => ({ type: b.type, value: b.value, amount: b.amount })),
+        },
+      });
+
+      const [apiResult] = await Promise.all([
+        apiPromise,
+        // Start animation — we will set final position once we know the result
+        (async () => {
+          // Small delay to ensure state updates before we resolve
+          await new Promise((r) => setTimeout(r, 100));
+        })(),
+      ]);
+
+      if (apiResult) {
+        const resultData = apiResult.result as { pocket: number; isRed: boolean; isBlack: boolean; betType: string; won: boolean };
+        const winNumber: RouletteNumber = {
+          number: resultData.pocket,
+          color: resultData.pocket === 0 ? 'green' : resultData.isRed ? 'red' : 'black',
+        };
+
+        // Now animate to the correct pocket
+        const winIdx = WHEEL_ORDER.indexOf(winNumber.number);
+        const slotAngle = (winIdx / 37) * 360;
+        const finalRotation = wheelRotation + spins * 360;
+        const finalBall = -(spins * 360 + slotAngle + 180);
+
+        setWheelRotation(finalRotation);
+        setBallAngle(finalBall);
+
+        // Wait for wheel animation
+        await new Promise((r) => setTimeout(r, 4000));
+
+        setResult(winNumber);
+        setHistory((prev) => [winNumber, ...prev.slice(0, 9)]);
+
+        // Calculate which placed bets won (for UI highlighting)
+        const winIds = new Set<string>();
+        for (const bet of placedBets) {
+          const rBet: RouletteBet = {
+            type: bet.type,
+            value: bet.value,
+            amount: bet.amount,
+            payout: 0,
+          };
+          const payout = calculateBetPayout(rBet, winNumber);
+          if (payout > 0) {
+            winIds.add(bet.id);
+          }
+        }
+
+        setWinningBetIds(winIds);
+        setTotalWin(apiResult.payout);
+        setPhase("result");
+      } else {
+        // API error — go back to betting
+        setPhase("betting");
       }
     }
-
-    setWinningBetIds(winIds);
-    setTotalWin(winTotal);
-
-    if (!user && winTotal > 0) {
-      setDemoBalance((b) => b + winTotal);
-    }
-
-    setPhase("result");
-  }, [phase, placedBets, totalBet, user, wheelRotation]);
+  }, [phase, placedBets, totalBet, isDemo, wheelRotation, placeBetApi]);
 
   /* new round */
   const newRound = useCallback(() => {
@@ -195,6 +272,20 @@ export default function RoulettePage() {
 
   return (
     <div className="min-h-screen px-2 sm:px-4 py-6">
+      {/* Demo Mode Banner */}
+      {isDemo && (
+        <div className="bg-yellow-500/90 text-black text-center py-2 text-sm font-bold mb-4">
+          DEMO MODE — Sign up to play for real
+        </div>
+      )}
+
+      {/* Error Banner */}
+      {gameError && (
+        <div className="bg-red-500/90 text-white text-center py-2 text-sm font-bold mb-4">
+          {gameError}
+        </div>
+      )}
+
       <div className="max-w-4xl mx-auto space-y-4">
         {/* header */}
         <div className="flex items-center justify-between">
@@ -215,7 +306,7 @@ export default function RoulettePage() {
           <p className="text-gray-400 text-sm">
             Balance:{" "}
             <span className="text-[#00FF88] font-bold">${balance.toLocaleString()}</span>
-            {!user && <span className="text-gray-600 ml-1">(Demo)</span>}
+            {isDemo && <span className="text-gray-600 ml-1">(Demo)</span>}
           </p>
         </div>
 
@@ -551,7 +642,7 @@ export default function RoulettePage() {
           <div className="flex justify-center">
             <motion.button
               onClick={handleSpin}
-              disabled={placedBets.length === 0 || totalBet > balance}
+              disabled={placedBets.length === 0 || totalBet > balance || gameLoading}
               className={cn(
                 "px-12 py-4 rounded-2xl text-xl font-black uppercase tracking-widest transition-all cursor-pointer",
                 "bg-gradient-to-r from-red-600 via-red-500 to-red-600 text-white",
