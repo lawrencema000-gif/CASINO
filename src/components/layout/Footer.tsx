@@ -13,7 +13,9 @@ const footerLinks = [
   { name: 'About', href: '/about' },
   { name: 'Terms of Service', href: '/terms' },
   { name: 'Privacy Policy', href: '/privacy' },
-  { name: 'Responsible Gaming', href: '/responsible-gaming' },
+  { name: 'Responsible Gambling', href: '/responsible-gambling' },
+  { name: 'Provably Fair', href: '/provably-fair' },
+  { name: 'Leaderboards', href: '/leaderboards' },
   { name: 'FAQ', href: '/faq' },
 ]
 

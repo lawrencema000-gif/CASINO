@@ -36,6 +36,7 @@ const mainNavLinks = [
 ]
 
 const moreGames = [
+  { name: "Hold'em", href: '/games/holdem', icon: Crown },
   { name: 'Dice', href: '/games/dice', icon: Dices },
   { name: 'Crash', href: '/games/crash', icon: Rocket },
   { name: 'Plinko', href: '/games/plinko', icon: Triangle },
