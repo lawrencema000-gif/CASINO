@@ -11,14 +11,13 @@ async function verifyAdmin() {
 
   if (error || !user) return null;
 
-  // Check role column (if exists) or fallback to email
+  // Check role column
   const { data: profile } = await supabaseAdmin
     .from("profiles")
     .select("role")
     .eq("id", user.id)
     .single();
-  const isAdmin =
-    profile?.role === "admin" || user.email === "admin@fortuna.casino";
+  const isAdmin = profile?.role === "admin";
   if (!isAdmin) return null;
   return user;
 }
@@ -102,48 +101,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get current profile
-    const { data: profile, error: fetchError } = await supabaseAdmin
-      .from("profiles")
-      .select("id, username, balance")
-      .eq("id", userId)
-      .single();
-
-    if (fetchError || !profile) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
-    }
-
-    const newBalance = Math.max(0, Number(profile.balance) + adjustAmount);
-
-    // Update balance
-    const { error: updateError } = await supabaseAdmin
-      .from("profiles")
-      .update({ balance: newBalance })
-      .eq("id", userId);
-
-    if (updateError) {
-      console.error("Balance update error:", updateError);
-      return NextResponse.json(
-        { error: "Failed to update balance" },
-        { status: 500 }
-      );
-    }
-
-    // Log the transaction
-    await supabaseAdmin.from("transactions").insert({
-      player_id: userId,
-      type: adjustAmount > 0 ? "admin_credit" : "admin_debit",
-      amount: Math.abs(adjustAmount),
-      balance_after: newBalance,
+    const { data: result, error: adjustError } = await supabaseAdmin.rpc('admin_adjust_balance', {
+      p_admin_id: admin.id,
+      p_target_id: userId,
+      p_amount: adjustAmount,
+      p_reason: reason || 'Admin adjustment',
     });
+
+    if (adjustError) {
+      console.error('Balance adjustment error:', adjustError);
+      const msg = adjustError.message || 'Failed to adjust balance';
+      return NextResponse.json({ error: msg }, { status: msg.includes('not found') ? 404 : 500 });
+    }
 
     return NextResponse.json({
       success: true,
       userId,
-      previousBalance: Number(profile.balance),
+      previousBalance: result.old_balance,
       adjustment: adjustAmount,
-      newBalance,
-      reason: reason || "Admin adjustment",
+      newBalance: result.new_balance,
+      reason: reason || 'Admin adjustment',
     });
   } catch (error) {
     console.error("Admin users POST error:", error);

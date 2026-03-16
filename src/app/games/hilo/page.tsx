@@ -178,7 +178,7 @@ export default function HiLoPage() {
       ])
 
       if (apiResult) {
-        const resultData = apiResult.result as {
+        const resultData = apiResult.result as unknown as {
           currentCard: Card
           nextCard: Card
           guess: string

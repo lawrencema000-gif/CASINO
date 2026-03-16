@@ -87,23 +87,15 @@ export default function WalletPage() {
   // Fetch daily bonus info
   const fetchDailyBonus = useCallback(async () => {
     if (!user) return
-    const supabase = createClient()
-    const { data } = await supabase
-      .from('daily_bonuses')
-      .select('day_streak, last_claimed, bonus_amount')
-      .eq('player_id', user.id)
-      .single()
-
-    if (data) {
-      setDailyBonus(data)
-      // Check if can claim today
-      const lastClaimed = new Date(data.last_claimed)
-      const now = new Date()
-      const diffHours = (now.getTime() - lastClaimed.getTime()) / (1000 * 60 * 60)
-      setCanClaimBonus(diffHours >= 24)
-    } else {
-      // No record - can claim first bonus
-      setCanClaimBonus(true)
+    try {
+      const res = await fetch('/api/bonus')
+      const data = await res.json()
+      if (res.ok) {
+        setDailyBonus({ day_streak: data.streak, last_claimed: data.last_collected || '', bonus_amount: 0 })
+        setCanClaimBonus(data.can_collect)
+      }
+    } catch (err) {
+      console.error('Bonus fetch error:', err)
     }
   }, [user])
 
@@ -137,35 +129,23 @@ export default function WalletPage() {
   const handleDeposit = async (amount: number) => {
     if (!user) return
     setDepositingAmount(amount)
-
-    const supabase = createClient()
-    const newBalance = balance + amount
-
-    // Update balance
-    const { error: balanceError } = await supabase
-      .from('profiles')
-      .update({ balance: newBalance })
-      .eq('id', user.id)
-
-    if (balanceError) {
+    try {
+      const res = await fetch('/api/wallet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'deposit', amount })
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      refreshBalance()
+      await fetchTransactions()
+      setShowDepositSuccess(true)
+      setTimeout(() => setShowDepositSuccess(false), 2000)
+    } catch (err) {
+      console.error('Deposit error:', err)
+    } finally {
       setDepositingAmount(null)
-      return
     }
-
-    // Record transaction
-    await supabase.from('transactions').insert({
-      player_id: user.id,
-      type: 'deposit',
-      amount,
-      balance_after: newBalance,
-      description: `Deposit - ${amount.toLocaleString()} credits`,
-    })
-
-    refreshBalance()
-    await fetchTransactions()
-    setDepositingAmount(null)
-    setShowDepositSuccess(true)
-    setTimeout(() => setShowDepositSuccess(false), 2000)
   }
 
   // Handle withdraw
@@ -173,82 +153,46 @@ export default function WalletPage() {
     if (!user) return
     const amount = parseFloat(withdrawAmount)
     if (isNaN(amount) || amount <= 0 || amount > balance) return
-
     setWithdrawing(true)
-    const supabase = createClient()
-    const newBalance = balance - amount
-
-    const { error: balanceError } = await supabase
-      .from('profiles')
-      .update({ balance: newBalance })
-      .eq('id', user.id)
-
-    if (!balanceError) {
-      await supabase.from('transactions').insert({
-        player_id: user.id,
-        type: 'withdrawal',
-        amount: -amount,
-        balance_after: newBalance,
-        description: `Withdrawal - ${amount.toLocaleString()} credits`,
+    try {
+      const res = await fetch('/api/wallet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'withdraw', amount: Math.floor(amount) })
       })
-
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
       refreshBalance()
       await fetchTransactions()
       setWithdrawAmount('')
+    } catch (err) {
+      console.error('Withdraw error:', err)
+    } finally {
+      setWithdrawing(false)
     }
-
-    setWithdrawing(false)
   }
 
   // Handle claim daily bonus
   const handleClaimBonus = async () => {
     if (!user || !canClaimBonus) return
     setClaimingBonus(true)
-
-    const supabase = createClient()
-    const streak = dailyBonus ? dailyBonus.day_streak + 1 : 1
-    const bonusAmount = Math.min(streak * 100, 5000) // 100 per day streak, max 5000
-    const newBalance = balance + bonusAmount
-
-    // Update/insert daily bonus record
-    if (dailyBonus) {
-      await supabase
-        .from('daily_bonuses')
-        .update({
-          day_streak: streak,
-          last_claimed: new Date().toISOString(),
-          bonus_amount: bonusAmount,
-        })
-        .eq('player_id', user.id)
-    } else {
-      await supabase.from('daily_bonuses').insert({
-        player_id: user.id,
-        day_streak: 1,
-        last_claimed: new Date().toISOString(),
-        bonus_amount: bonusAmount,
+    try {
+      const res = await fetch('/api/bonus', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'collect' })
       })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      refreshBalance()
+      await fetchTransactions()
+      await fetchDailyBonus()
+      setCanClaimBonus(false)
+    } catch (err) {
+      console.error('Bonus claim error:', err)
+    } finally {
+      setClaimingBonus(false)
     }
-
-    // Update balance
-    await supabase
-      .from('profiles')
-      .update({ balance: newBalance })
-      .eq('id', user.id)
-
-    // Record transaction
-    await supabase.from('transactions').insert({
-      player_id: user.id,
-      type: 'bonus',
-      amount: bonusAmount,
-      balance_after: newBalance,
-      description: `Daily bonus - Day ${streak} streak (${bonusAmount.toLocaleString()} credits)`,
-    })
-
-    refreshBalance()
-    await fetchTransactions()
-    await fetchDailyBonus()
-    setCanClaimBonus(false)
-    setClaimingBonus(false)
   }
 
   return (

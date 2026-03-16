@@ -54,6 +54,67 @@ function hashServerSeed(seed: string): string {
   return crypto.createHash("sha256").update(seed).digest("hex");
 }
 
+// Validate game-specific parameters
+function validateGameData(gameType: ValidGameType, gameData: Record<string, unknown>): string | null {
+  switch (gameType) {
+    case 'dice': {
+      const target = Number(gameData.target) || 50;
+      if (target < 2 || target > 98) return 'Dice target must be between 2 and 98';
+      break;
+    }
+    case 'mines': {
+      const mineCount = Number(gameData.mineCount) || 5;
+      if (mineCount < 1 || mineCount > 24) return 'Mine count must be between 1 and 24';
+      break;
+    }
+    case 'keno': {
+      const picks = gameData.picks as number[] | undefined;
+      if (!picks || !Array.isArray(picks) || picks.length < 1 || picks.length > 10) return 'Keno: pick 1-10 numbers';
+      if (picks.some((p: number) => p < 1 || p > 40 || !Number.isInteger(p))) return 'Keno picks must be integers 1-40';
+      if (new Set(picks).size !== picks.length) return 'Keno picks must be unique';
+      break;
+    }
+    case 'lottery': {
+      const picks = gameData.picks as number[] | undefined;
+      if (!picks || !Array.isArray(picks) || picks.length !== 6) return 'Lottery: pick exactly 6 numbers';
+      if (picks.some((p: number) => p < 1 || p > 49 || !Number.isInteger(p))) return 'Lottery picks must be integers 1-49';
+      if (new Set(picks).size !== picks.length) return 'Lottery picks must be unique';
+      break;
+    }
+    case 'limbo': {
+      const target = Number(gameData.targetMultiplier) || 2;
+      if (target < 1.01 || target > 1000) return 'Limbo target must be between 1.01x and 1000x';
+      break;
+    }
+    case 'hilo': {
+      const guess = gameData.guess as string;
+      if (!guess || !['higher', 'lower'].includes(guess)) return 'HiLo: guess must be "higher" or "lower"';
+      break;
+    }
+    case 'plinko': {
+      const risk = gameData.risk as string;
+      if (risk && !['low', 'medium', 'high'].includes(risk)) return 'Plinko risk must be low, medium, or high';
+      break;
+    }
+    case 'roulette': {
+      const betType = gameData.betType as string;
+      const validBets = ['red', 'black', 'even', 'odd', 'number', '1-18', '19-36', '1st12', '2nd12', '3rd12'];
+      if (!betType || !validBets.includes(betType)) return 'Invalid roulette bet type';
+      if (betType === 'number') {
+        const num = Number(gameData.betNumber);
+        if (isNaN(num) || num < 0 || num > 36 || !Number.isInteger(num)) return 'Roulette number must be 0-36';
+      }
+      break;
+    }
+    case 'coinflip': {
+      const choice = gameData.choice as string;
+      if (choice && !['heads', 'tails'].includes(choice)) return 'Coinflip: choose heads or tails';
+      break;
+    }
+  }
+  return null;
+}
+
 function generateGameResult(
   gameType: ValidGameType,
   serverSeed: string,
@@ -435,19 +496,14 @@ function generateGameResult(
         3: { 2: 2, 3: 26 },
         4: { 2: 1.5, 3: 8, 4: 80 },
         5: { 3: 3, 4: 12, 5: 200 },
+        6: { 3: 2, 4: 5, 5: 50, 6: 500 },
+        7: { 3: 1.5, 4: 3, 5: 15, 6: 100, 7: 1000 },
+        8: { 4: 2, 5: 8, 6: 50, 7: 250, 8: 2000 },
+        9: { 4: 1.5, 5: 5, 6: 25, 7: 100, 8: 500, 9: 3000 },
         10: { 5: 3, 6: 15, 7: 50, 8: 200, 9: 750, 10: 3000 },
       };
 
-      const tableKey =
-        numPicks in payoutTable
-          ? numPicks
-          : Object.keys(payoutTable)
-              .map(Number)
-              .reduce((prev, curr) =>
-                Math.abs(curr - numPicks) < Math.abs(prev - numPicks)
-                  ? curr
-                  : prev
-              );
+      const tableKey = numPicks in payoutTable ? numPicks : 10; // fallback to 10
       const mult = payoutTable[tableKey]?.[hits] || 0;
 
       return {
@@ -462,14 +518,12 @@ function generateGameResult(
       const guess = (gameData.guess as string) || "higher";
       const nextCard = cards[1];
 
-      const won =
-        guess === "higher"
-          ? nextCard.value > currentCard.value
-          : nextCard.value < currentCard.value;
+      const tied = nextCard.value === currentCard.value;
+      const won = tied ? false : (guess === "higher" ? nextCard.value > currentCard.value : nextCard.value < currentCard.value);
 
       return {
-        result: { currentCard, nextCard, guess, won },
-        multiplier: won ? 1.96 : 0,
+        result: { currentCard, nextCard, guess, won, tied },
+        multiplier: tied ? 1 : (won ? 1.96 : 0), // Push on tie
       };
     }
 
@@ -678,6 +732,60 @@ export async function POST(request: NextRequest) {
           { error: "Invalid bet amount" },
           { status: 400 }
         );
+      }
+
+      // ---- RESPONSIBLE GAMBLING CHECKS ----
+      const { data: playerProfile } = await supabaseAdmin
+        .from('profiles')
+        .select('self_excluded_until, daily_loss_limit, daily_deposit_limit')
+        .eq('id', user.id)
+        .single();
+
+      if (playerProfile?.self_excluded_until) {
+        const excludedUntil = new Date(playerProfile.self_excluded_until);
+        if (excludedUntil > new Date()) {
+          return NextResponse.json(
+            { error: `Self-excluded until ${excludedUntil.toLocaleDateString()}. Please visit responsible gambling settings to manage your exclusion.` },
+            { status: 403 }
+          );
+        }
+      }
+
+      // Check daily loss limit
+      if (playerProfile?.daily_loss_limit) {
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+
+        const { data: todayLosses } = await supabaseAdmin
+          .from('transactions')
+          .select('amount')
+          .eq('player_id', user.id)
+          .eq('type', 'bet')
+          .gte('created_at', todayStart.toISOString());
+
+        const totalLossToday = (todayLosses || []).reduce((sum, t) => sum + Math.abs(t.amount), 0);
+        if (totalLossToday + betAmount > playerProfile.daily_loss_limit) {
+          return NextResponse.json(
+            { error: `Daily loss limit of $${playerProfile.daily_loss_limit.toLocaleString()} reached. You can adjust limits in your profile settings.` },
+            { status: 403 }
+          );
+        }
+      }
+
+      const MIN_BET = 1;
+      const MAX_BET = 1000000;
+
+      if (betAmount < MIN_BET || betAmount > MAX_BET) {
+        return NextResponse.json(
+          { error: `Bet must be between $${MIN_BET} and $${MAX_BET.toLocaleString()}` },
+          { status: 400 }
+        );
+      }
+
+      // Validate game-specific parameters
+      const validationError = validateGameData(gameType as ValidGameType, gameData);
+      if (validationError) {
+        return NextResponse.json({ error: validationError }, { status: 400 });
       }
 
       // Generate provably fair seeds
