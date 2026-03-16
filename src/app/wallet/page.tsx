@@ -47,7 +47,7 @@ const DEPOSIT_OPTIONS = [1000, 5000, 10000, 50000]
 export default function WalletPage() {
   const router = useRouter()
   const { user, refreshProfile } = useAuth()
-  const { balance, refreshBalance } = useBalance(user?.id)
+  const { balance, purchasedBalance, bonusBalance, refreshBalance } = useBalance(user?.id)
 
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [txLoading, setTxLoading] = useState(true)
@@ -221,9 +221,15 @@ export default function WalletPage() {
               <Coins className="w-6 h-6 text-[var(--casino-accent)]" />
               <p className="text-sm text-[var(--casino-text-muted)]">Available Balance</p>
             </div>
-            <h2 className="text-5xl sm:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-[#c9a227] via-[#e6c84a] to-[#c9a227] mb-6">
-              ${balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+            <h2 className="text-5xl sm:text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-[#c9a227] via-[#e6c84a] to-[#c9a227] mb-3">
+              {balance.toLocaleString('en-US')} Credits
             </h2>
+            <div className="flex items-center justify-center gap-6 mb-6 text-xs text-[var(--casino-text-muted)]">
+              <span>Purchased: <span className="text-[var(--casino-blue)] font-semibold">{purchasedBalance.toLocaleString()}</span></span>
+              <span className="w-px h-3 bg-[var(--casino-border)]" />
+              <span>Bonus: <span className="text-[var(--casino-purple-light)] font-semibold">{bonusBalance.toLocaleString()}</span></span>
+            </div>
+            <p className="text-[10px] text-[var(--casino-text-muted)]/60 mb-4">Credits are virtual entertainment tokens with no monetary value.</p>
 
             {/* Deposit/Withdraw Tabs */}
             <div className="flex gap-2 justify-center mb-6">

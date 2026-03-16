@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/client";
 
 interface BalanceState {
   balance: number;
+  purchasedBalance: number;
+  bonusBalance: number;
   loading: boolean;
 }
 
@@ -16,6 +18,8 @@ interface BalanceState {
 export function useBalance(userId: string | undefined) {
   const [state, setState] = useState<BalanceState>({
     balance: 0,
+    purchasedBalance: 0,
+    bonusBalance: 0,
     loading: true,
   });
   const supabase = createClient();
@@ -23,13 +27,13 @@ export function useBalance(userId: string | undefined) {
 
   const fetchBalance = useCallback(async () => {
     if (!userId) {
-      setState({ balance: 0, loading: false });
+      setState({ balance: 0, purchasedBalance: 0, bonusBalance: 0, loading: false });
       return;
     }
 
     const { data, error } = await supabase
       .from("profiles")
-      .select("balance")
+      .select("balance, purchased_balance, bonus_balance")
       .eq("id", userId)
       .single();
 
@@ -39,7 +43,12 @@ export function useBalance(userId: string | undefined) {
       return;
     }
 
-    setState({ balance: data.balance, loading: false });
+    setState({
+      balance: data.balance,
+      purchasedBalance: data.purchased_balance ?? 0,
+      bonusBalance: data.bonus_balance ?? 0,
+      loading: false,
+    });
   }, [userId, supabase]);
 
   useEffect(() => {
@@ -59,8 +68,13 @@ export function useBalance(userId: string | undefined) {
           filter: `id=eq.${userId}`,
         },
         (payload) => {
-          const newBalance = (payload.new as { balance: number }).balance;
-          setState({ balance: newBalance, loading: false });
+          const p = payload.new as { balance: number; purchased_balance?: number; bonus_balance?: number };
+          setState((prev) => ({
+            balance: p.balance,
+            purchasedBalance: p.purchased_balance ?? prev.purchasedBalance,
+            bonusBalance: p.bonus_balance ?? prev.bonusBalance,
+            loading: false,
+          }));
         }
       )
       .subscribe();
@@ -80,7 +94,7 @@ export function useBalance(userId: string | undefined) {
    * with the balance returned from /api/games.
    */
   const setBalanceFromApi = useCallback((newBalance: number) => {
-    setState({ balance: newBalance, loading: false });
+    setState((prev) => ({ ...prev, balance: newBalance, loading: false }));
   }, []);
 
   const refreshBalance = useCallback(() => {
@@ -89,6 +103,8 @@ export function useBalance(userId: string | undefined) {
 
   return {
     balance: state.balance,
+    purchasedBalance: state.purchasedBalance,
+    bonusBalance: state.bonusBalance,
     loading: state.loading,
     setBalanceFromApi,
     refreshBalance,
