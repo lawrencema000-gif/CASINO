@@ -24,6 +24,7 @@ import {
   Crown,
   Gift,
   Zap,
+  Bell,
 } from 'lucide-react'
 import BalanceDisplay from '../ui/BalanceDisplay'
 import { useGameState } from '@/hooks/useGameState'
@@ -81,6 +82,7 @@ export default function Header() {
   const [profileOpen, setProfileOpen] = useState(false)
 
   const { profile, isMuted, toggleMute, fetchProfile, isLoading } = useGameState()
+  const [unreadCount, setUnreadCount] = useState(0)
 
   useEffect(() => {
     fetchProfile()
@@ -88,6 +90,21 @@ export default function Header() {
 
   const isAuthed = !!profile
   const balance = profile?.balance ?? 10000
+
+  // Fetch unread notification count for authenticated users
+  useEffect(() => {
+    if (!isAuthed) return
+    const fetchUnread = async () => {
+      try {
+        const res = await fetch('/api/notifications?unread=true&limit=1')
+        const data = await res.json()
+        if (res.ok) setUnreadCount(data.unread_count || 0)
+      } catch { /* silent */ }
+    }
+    fetchUnread()
+    const interval = setInterval(fetchUnread, 30000) // poll every 30s
+    return () => clearInterval(interval)
+  }, [isAuthed])
 
   return (
     <header className="sticky top-0 z-50 w-full glass-dark">
@@ -170,6 +187,32 @@ export default function Header() {
             {/* Balance */}
             <BalanceDisplay balance={balance} showAddFunds={isAuthed} size="sm" />
 
+            {/* Notification Bell (authenticated users only) */}
+            {isAuthed && (
+              <Link
+                href="/notifications"
+                className="relative p-2 rounded-lg text-[var(--text-secondary)] hover:text-white hover:bg-white/5 transition-colors"
+                title="Notifications"
+              >
+                <Bell className="w-5 h-5" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] flex items-center justify-center px-1 rounded-full bg-red-500 text-white text-[10px] font-bold leading-none">
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </span>
+                )}
+              </Link>
+            )}
+
+            {/* Notifications Bell */}
+            {isAuthed && (
+              <Link
+                href="/notifications"
+                className="relative p-2 rounded-lg text-[var(--text-secondary)] hover:text-white hover:bg-white/5 transition-colors"
+              >
+                <Bell className="w-5 h-5" />
+              </Link>
+            )}
+
             {/* Mute Toggle */}
             <button
               onClick={toggleMute}
@@ -217,11 +260,18 @@ export default function Header() {
                         Wallet
                       </Link>
                       <Link
-                        href="/profile"
+                        href="/achievements"
                         className="flex items-center gap-3 px-4 py-3 text-sm text-[var(--text-secondary)] hover:text-white hover:bg-white/5 transition-colors"
                       >
                         <Trophy className="w-4 h-4 text-[var(--gold)]" />
                         Achievements
+                      </Link>
+                      <Link
+                        href="/store"
+                        className="flex items-center gap-3 px-4 py-3 text-sm text-[var(--text-secondary)] hover:text-white hover:bg-white/5 transition-colors"
+                      >
+                        <Gift className="w-4 h-4 text-[var(--gold)]" />
+                        Credit Store
                       </Link>
                     </motion.div>
                   )}

@@ -86,18 +86,74 @@ export function useAuth() {
   const signIn = async (email: string, password: string) => {
     setState((prev) => ({ ...prev, loading: true, error: null }));
 
+    // --- Account lockout check (client-side) ---
+    const LOCKOUT_KEY = "login_attempts";
+    const MAX_ATTEMPTS = 5;
+    const LOCKOUT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+
+    try {
+      const raw = localStorage.getItem(LOCKOUT_KEY);
+      if (raw) {
+        const lockout = JSON.parse(raw) as { count: number; firstAttempt: number };
+        const elapsed = Date.now() - lockout.firstAttempt;
+
+        if (lockout.count >= MAX_ATTEMPTS && elapsed < LOCKOUT_WINDOW_MS) {
+          const minutesLeft = Math.ceil((LOCKOUT_WINDOW_MS - elapsed) / 60000);
+          const msg = `Account temporarily locked. Try again in ${minutesLeft} minute${minutesLeft !== 1 ? "s" : ""}.`;
+          setState((prev) => ({ ...prev, loading: false, error: msg }));
+          return { error: msg };
+        }
+
+        // Reset if window has expired
+        if (elapsed >= LOCKOUT_WINDOW_MS) {
+          localStorage.removeItem(LOCKOUT_KEY);
+        }
+      }
+    } catch {
+      // localStorage unavailable — skip lockout check
+    }
+
     const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
 
     if (error) {
+      // Track failed attempt
+      try {
+        const raw = localStorage.getItem(LOCKOUT_KEY);
+        const lockout = raw
+          ? (JSON.parse(raw) as { count: number; firstAttempt: number })
+          : { count: 0, firstAttempt: Date.now() };
+
+        const elapsed = Date.now() - lockout.firstAttempt;
+        if (elapsed >= LOCKOUT_WINDOW_MS) {
+          // Start fresh window
+          localStorage.setItem(
+            LOCKOUT_KEY,
+            JSON.stringify({ count: 1, firstAttempt: Date.now() })
+          );
+        } else {
+          lockout.count += 1;
+          localStorage.setItem(LOCKOUT_KEY, JSON.stringify(lockout));
+        }
+      } catch {
+        // localStorage unavailable
+      }
+
       setState((prev) => ({
         ...prev,
         loading: false,
         error: error.message,
       }));
       return { error: error.message };
+    }
+
+    // Successful login — clear lockout counter
+    try {
+      localStorage.removeItem(LOCKOUT_KEY);
+    } catch {
+      // localStorage unavailable
     }
 
     const profile = await fetchProfile(data.user.id);

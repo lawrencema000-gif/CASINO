@@ -5,7 +5,8 @@ import { motion } from 'framer-motion'
 import {
   Users, Gamepad2, TrendingUp, DollarSign,
   Shield, Clock, ArrowUpRight, ArrowDownRight,
-  Loader2, AlertTriangle, Crown, BarChart3
+  Loader2, AlertTriangle, Crown, BarChart3, Wallet,
+  FileText, Settings, Gamepad2 as GamepadIcon
 } from 'lucide-react'
 import Link from 'next/link'
 import { useAuth } from '@/hooks/useAuth'
@@ -248,6 +249,18 @@ export default function AdminDashboard() {
             </Link>
             <Link href="/admin/analytics" className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors flex items-center gap-1.5">
               <BarChart3 className="w-3.5 h-3.5" /> Analytics
+            </Link>
+            <Link href="/admin/wallets" className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors flex items-center gap-1.5">
+              <Wallet className="w-3.5 h-3.5" /> Wallets
+            </Link>
+            <Link href="/admin/games" className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors flex items-center gap-1.5">
+              <GamepadIcon className="w-3.5 h-3.5" /> Games
+            </Link>
+            <Link href="/admin/audit-logs" className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors flex items-center gap-1.5">
+              <FileText className="w-3.5 h-3.5" /> Audit
+            </Link>
+            <Link href="/admin/settings" className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors flex items-center gap-1.5">
+              <Settings className="w-3.5 h-3.5" /> Settings
             </Link>
             <Link href="/" className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors">
               Back to Casino
