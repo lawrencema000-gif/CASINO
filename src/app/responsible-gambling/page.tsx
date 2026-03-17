@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import {
   Clock, ShieldAlert, Ban, TrendingDown, Wallet,
-  ExternalLink, AlertTriangle, ChevronRight, Check, ArrowLeft
+  ExternalLink, AlertTriangle, ChevronRight, Check, ArrowLeft,
+  Timer, Activity, BarChart3, Loader2
 } from 'lucide-react'
 import Button from '@/components/ui/Button'
 import Card from '@/components/ui/Card'
@@ -12,16 +13,35 @@ import { cn } from '@/components/ui/cn'
 import { useAuth } from '@/hooks/useAuth'
 import { useRouter } from 'next/navigation'
 
-interface GamblingSettings {
-  lossLimit: number | null
-  depositLimit: number | null
-  selfExclusionUntil: string | null
+interface GamblingLimits {
+  daily_loss_limit: number | null
+  daily_deposit_limit: number | null
+  session_time_limit: number | null // in minutes
+  self_excluded_until: string | null
+}
+
+interface GamblingStats {
+  today_losses: number
+  today_deposits: number
+  session_minutes: number
+  week_wagered: number
+  week_games: number
 }
 
 const COOL_OFF_OPTIONS = [
-  { label: '24 Hours', value: 1 },
-  { label: '7 Days', value: 7 },
-  { label: '30 Days', value: 30 },
+  { label: '24 Hours', value: '24h', days: 1 },
+  { label: '7 Days', value: '7d', days: 7 },
+  { label: '30 Days', value: '30d', days: 30 },
+  { label: '90 Days', value: '90d', days: 90 },
+]
+
+const SESSION_TIME_OPTIONS = [
+  { label: '30 min', value: 30 },
+  { label: '1 hour', value: 60 },
+  { label: '2 hours', value: 120 },
+  { label: '4 hours', value: 240 },
+  { label: '8 hours', value: 480 },
+  { label: 'No limit', value: 0 },
 ]
 
 const RESOURCES = [
@@ -52,23 +72,6 @@ const RESOURCES = [
   },
 ]
 
-function getStoredSettings(): GamblingSettings {
-  if (typeof window === 'undefined') {
-    return { lossLimit: null, depositLimit: null, selfExclusionUntil: null }
-  }
-  try {
-    const stored = localStorage.getItem('responsible-gambling-settings')
-    if (stored) return JSON.parse(stored)
-  } catch {
-    // ignore parse errors
-  }
-  return { lossLimit: null, depositLimit: null, selfExclusionUntil: null }
-}
-
-function saveSettings(settings: GamblingSettings) {
-  localStorage.setItem('responsible-gambling-settings', JSON.stringify(settings))
-}
-
 function getSessionStart(): number {
   if (typeof window === 'undefined') return Date.now()
   const stored = sessionStorage.getItem('session-start')
@@ -90,14 +93,23 @@ function formatDuration(ms: number): string {
 
 export default function ResponsibleGamblingPage() {
   const router = useRouter()
-  const { user } = useAuth()
+  const { user, loading: authLoading } = useAuth()
 
-  const [settings, setSettings] = useState<GamblingSettings>(getStoredSettings)
+  const [limits, setLimits] = useState<GamblingLimits>({
+    daily_loss_limit: null, daily_deposit_limit: null,
+    session_time_limit: null, self_excluded_until: null,
+  })
+  const [stats, setStats] = useState<GamblingStats>({
+    today_losses: 0, today_deposits: 0, session_minutes: 0,
+    week_wagered: 0, week_games: 0,
+  })
   const [sessionDuration, setSessionDuration] = useState(0)
   const [lossInput, setLossInput] = useState('')
   const [depositInput, setDepositInput] = useState('')
-  const [showExclusionConfirm, setShowExclusionConfirm] = useState<number | null>(null)
+  const [showExclusionConfirm, setShowExclusionConfirm] = useState<string | null>(null)
   const [saved, setSaved] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
 
   // Session timer
   useEffect(() => {
@@ -108,79 +120,131 @@ export default function ResponsibleGamblingPage() {
     return () => clearInterval(interval)
   }, [])
 
-  // Init input fields from stored settings
-  useEffect(() => {
-    const s = getStoredSettings()
-    setSettings(s)
-    if (s.lossLimit) setLossInput(s.lossLimit.toString())
-    if (s.depositLimit) setDepositInput(s.depositLimit.toString())
-  }, [])
+  // Fetch server-backed limits + stats
+  const fetchData = useCallback(async () => {
+    if (!user) { setLoading(false); return }
+    try {
+      const [limitsRes, statsRes] = await Promise.all([
+        fetch('/api/responsible-gambling'),
+        fetch('/api/responsible-gambling/stats'),
+      ])
+      if (limitsRes.ok) {
+        const data = await limitsRes.json()
+        setLimits(data)
+        if (data.daily_loss_limit) setLossInput(data.daily_loss_limit.toString())
+        if (data.daily_deposit_limit) setDepositInput(data.daily_deposit_limit.toString())
+      }
+      if (statsRes.ok) {
+        const data = await statsRes.json()
+        setStats(data)
+      }
+    } catch (err) {
+      console.error('Failed to fetch gambling settings:', err)
+    } finally {
+      setLoading(false)
+    }
+  }, [user])
 
-  // Check if currently self-excluded
-  const isExcluded = settings.selfExclusionUntil
-    ? new Date(settings.selfExclusionUntil) > new Date()
+  useEffect(() => { fetchData() }, [fetchData])
+
+  const isExcluded = limits.self_excluded_until
+    ? new Date(limits.self_excluded_until) > new Date()
     : false
-  const exclusionEnd = settings.selfExclusionUntil
-    ? new Date(settings.selfExclusionUntil)
+  const exclusionEnd = limits.self_excluded_until
+    ? new Date(limits.self_excluded_until)
     : null
+
+  const sessionMinutes = Math.floor(sessionDuration / 60000)
+  const sessionLimitActive = limits.session_time_limit && limits.session_time_limit > 0
+  const sessionLimitExceeded = sessionLimitActive && sessionMinutes >= (limits.session_time_limit ?? 0)
 
   const flash = (msg: string) => {
     setSaved(msg)
     setTimeout(() => setSaved(null), 2500)
   }
 
+  const saveLimit = async (field: string, value: number | null) => {
+    if (!user) return
+    setSaving(true)
+    try {
+      const res = await fetch('/api/responsible-gambling', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'set_limits', [field]: value }),
+      })
+      if (res.ok) {
+        setLimits(prev => ({ ...prev, [field]: value }))
+        flash(`${field.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())} ${value ? 'saved' : 'removed'}`)
+      }
+    } catch {
+      flash('Failed to save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const handleSaveLossLimit = () => {
     const val = parseFloat(lossInput)
     if (isNaN(val) || val <= 0) {
-      const updated = { ...settings, lossLimit: null }
-      setSettings(updated)
-      saveSettings(updated)
+      saveLimit('daily_loss_limit', null)
       setLossInput('')
-      flash('Loss limit removed')
       return
     }
-    const updated = { ...settings, lossLimit: val }
-    setSettings(updated)
-    saveSettings(updated)
-    flash('Loss limit saved')
+    saveLimit('daily_loss_limit', Math.floor(val))
   }
 
   const handleSaveDepositLimit = () => {
     const val = parseFloat(depositInput)
     if (isNaN(val) || val <= 0) {
-      const updated = { ...settings, depositLimit: null }
-      setSettings(updated)
-      saveSettings(updated)
+      saveLimit('daily_deposit_limit', null)
       setDepositInput('')
-      flash('Deposit limit removed')
       return
     }
-    const updated = { ...settings, depositLimit: val }
-    setSettings(updated)
-    saveSettings(updated)
-    flash('Deposit limit saved')
+    saveLimit('daily_deposit_limit', Math.floor(val))
   }
 
-  const handleSelfExclude = (days: number) => {
-    const until = new Date()
-    until.setDate(until.getDate() + days)
-    const updated = { ...settings, selfExclusionUntil: until.toISOString() }
-    setSettings(updated)
-    saveSettings(updated)
-    setShowExclusionConfirm(null)
-    flash(`Self-exclusion active for ${days} day${days > 1 ? 's' : ''}`)
+  const handleSessionTimeLimit = (minutes: number) => {
+    saveLimit('session_time_limit', minutes === 0 ? null : minutes)
   }
 
-  const handleRemoveExclusion = () => {
-    const updated = { ...settings, selfExclusionUntil: null }
-    setSettings(updated)
-    saveSettings(updated)
-    flash('Self-exclusion removed')
+  const handleSelfExclude = async (duration: string) => {
+    if (!user) return
+    setSaving(true)
+    try {
+      const res = await fetch('/api/responsible-gambling', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'self_exclude', duration }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setLimits(prev => ({ ...prev, self_excluded_until: data.excluded_until }))
+        setShowExclusionConfirm(null)
+        flash('Self-exclusion activated')
+      }
+    } catch {
+      flash('Failed to activate self-exclusion')
+    } finally {
+      setSaving(false)
+    }
   }
 
   const fadeUp = {
     initial: { opacity: 0, y: 20 },
     animate: { opacity: 1, y: 0 },
+  }
+
+  const lossLimitPct = limits.daily_loss_limit && stats.today_losses > 0
+    ? Math.min(100, (stats.today_losses / limits.daily_loss_limit) * 100) : 0
+  const depositLimitPct = limits.daily_deposit_limit && stats.today_deposits > 0
+    ? Math.min(100, (stats.today_deposits / limits.daily_deposit_limit) * 100) : 0
+
+  if (authLoading || loading) {
+    return (
+      <div className="min-h-screen bg-[var(--casino-bg)] flex items-center justify-center">
+        <Loader2 className="w-8 h-8 text-[var(--casino-accent)] animate-spin" />
+      </div>
+    )
   }
 
   return (
@@ -218,6 +282,80 @@ export default function ResponsibleGamblingPage() {
           </motion.div>
         )}
 
+        {/* Activity Stats (logged in users) */}
+        {user && (
+          <motion.div {...fadeUp} transition={{ delay: 0.03 }}>
+            <Card hover={false} className="p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <Activity className="w-6 h-6 text-[var(--casino-accent)]" />
+                <h2 className="text-xl font-semibold text-white">Your Activity</h2>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-white">${stats.today_losses.toLocaleString()}</p>
+                  <p className="text-xs text-[var(--casino-text-muted)]">Today&apos;s Losses</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-white">${stats.today_deposits.toLocaleString()}</p>
+                  <p className="text-xs text-[var(--casino-text-muted)]">Today&apos;s Deposits</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-white">${stats.week_wagered.toLocaleString()}</p>
+                  <p className="text-xs text-[var(--casino-text-muted)]">This Week Wagered</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-white">{stats.week_games}</p>
+                  <p className="text-xs text-[var(--casino-text-muted)]">Games This Week</p>
+                </div>
+              </div>
+
+              {/* Progress bars for active limits */}
+              {(limits.daily_loss_limit || limits.daily_deposit_limit) && (
+                <div className="mt-4 space-y-3 pt-4 border-t border-[var(--casino-border)]">
+                  {limits.daily_loss_limit && (
+                    <div>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-[var(--casino-text-muted)]">Loss limit usage</span>
+                        <span className={lossLimitPct >= 80 ? 'text-[var(--casino-red)]' : 'text-[var(--casino-text-muted)]'}>
+                          ${stats.today_losses} / ${limits.daily_loss_limit}
+                        </span>
+                      </div>
+                      <div className="h-2 bg-[var(--casino-bg)] rounded-full overflow-hidden">
+                        <div
+                          className={cn(
+                            'h-full rounded-full transition-all',
+                            lossLimitPct >= 80 ? 'bg-[var(--casino-red)]' : lossLimitPct >= 50 ? 'bg-[var(--casino-accent)]' : 'bg-[var(--casino-green)]'
+                          )}
+                          style={{ width: `${lossLimitPct}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                  {limits.daily_deposit_limit && (
+                    <div>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-[var(--casino-text-muted)]">Deposit limit usage</span>
+                        <span className={depositLimitPct >= 80 ? 'text-[var(--casino-red)]' : 'text-[var(--casino-text-muted)]'}>
+                          ${stats.today_deposits} / ${limits.daily_deposit_limit}
+                        </span>
+                      </div>
+                      <div className="h-2 bg-[var(--casino-bg)] rounded-full overflow-hidden">
+                        <div
+                          className={cn(
+                            'h-full rounded-full transition-all',
+                            depositLimitPct >= 80 ? 'bg-[var(--casino-red)]' : depositLimitPct >= 50 ? 'bg-[var(--casino-accent)]' : 'bg-[var(--casino-green)]'
+                          )}
+                          style={{ width: `${depositLimitPct}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </Card>
+          </motion.div>
+        )}
+
         {/* Session Timer Card */}
         <motion.div {...fadeUp} transition={{ delay: 0.05 }}>
           <Card hover={false} className="p-6">
@@ -226,15 +364,68 @@ export default function ResponsibleGamblingPage() {
               <h2 className="text-xl font-semibold text-white">Current Session</h2>
             </div>
             <div className="flex items-center gap-4">
-              <div className="text-4xl font-mono font-bold text-white">
+              <div className={cn(
+                'text-4xl font-mono font-bold',
+                sessionLimitExceeded ? 'text-[var(--casino-red)]' : 'text-white'
+              )}>
                 {formatDuration(sessionDuration)}
               </div>
-              <span className="text-sm text-[var(--casino-text-muted)]">
-                Time spent this session
-              </span>
+              {sessionLimitExceeded && (
+                <span className="px-3 py-1 rounded-lg bg-[var(--casino-red)]/10 border border-[var(--casino-red)]/30 text-xs font-semibold text-[var(--casino-red)]">
+                  TIME LIMIT REACHED
+                </span>
+              )}
             </div>
+            {sessionLimitActive && !sessionLimitExceeded && (
+              <div className="mt-3">
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-[var(--casino-text-muted)]">Session time</span>
+                  <span className="text-[var(--casino-text-muted)]">
+                    {sessionMinutes}m / {limits.session_time_limit}m
+                  </span>
+                </div>
+                <div className="h-1.5 bg-[var(--casino-bg)] rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-[var(--casino-accent)] rounded-full transition-all"
+                    style={{ width: `${Math.min(100, (sessionMinutes / (limits.session_time_limit ?? 1)) * 100)}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </Card>
         </motion.div>
+
+        {/* Session Time Limit */}
+        {user && (
+          <motion.div {...fadeUp} transition={{ delay: 0.08 }}>
+            <Card hover={false} className="p-6">
+              <div className="flex items-center gap-3 mb-3">
+                <Timer className="w-6 h-6 text-[var(--casino-accent)]" />
+                <h2 className="text-xl font-semibold text-white">Session Time Limit</h2>
+              </div>
+              <p className="text-[var(--casino-text-muted)] mb-4 text-sm">
+                Set a maximum session duration. You&apos;ll receive a warning when time is up.
+              </p>
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                {SESSION_TIME_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => handleSessionTimeLimit(opt.value)}
+                    disabled={saving}
+                    className={cn(
+                      'rounded-xl border p-3 text-center transition-all cursor-pointer',
+                      (limits.session_time_limit === opt.value || (!limits.session_time_limit && opt.value === 0))
+                        ? 'border-[var(--casino-accent)]/50 bg-[var(--casino-accent)]/10 text-[var(--casino-accent)]'
+                        : 'border-[var(--casino-border)] bg-[var(--casino-surface)] text-[var(--casino-text-muted)] hover:border-[var(--casino-accent)]/30 hover:text-white'
+                    )}
+                  >
+                    <div className="text-sm font-semibold">{opt.label}</div>
+                  </button>
+                ))}
+              </div>
+            </Card>
+          </motion.div>
+        )}
 
         {/* Self-Exclusion Card */}
         <motion.div {...fadeUp} transition={{ delay: 0.1 }}>
@@ -248,7 +439,7 @@ export default function ResponsibleGamblingPage() {
             </p>
 
             {isExcluded && exclusionEnd ? (
-              <div className="rounded-xl bg-[var(--casino-red)]/10 border border-[var(--casino-red)]/30 p-4 mb-4">
+              <div className="rounded-xl bg-[var(--casino-red)]/10 border border-[var(--casino-red)]/30 p-4">
                 <div className="flex items-center gap-2 text-[var(--casino-red)] mb-1">
                   <AlertTriangle className="w-5 h-5" />
                   <span className="font-semibold">Self-Exclusion Active</span>
@@ -256,15 +447,12 @@ export default function ResponsibleGamblingPage() {
                 <p className="text-sm text-[var(--casino-text-muted)]">
                   Until {exclusionEnd.toLocaleDateString()} at {exclusionEnd.toLocaleTimeString()}
                 </p>
-                <button
-                  onClick={handleRemoveExclusion}
-                  className="mt-3 text-xs text-[var(--casino-text-muted)] underline hover:text-white transition-colors cursor-pointer"
-                >
-                  Remove exclusion (not recommended)
-                </button>
+                <p className="text-xs text-[var(--casino-text-muted)]/60 mt-2">
+                  Self-exclusion cannot be removed early. This protects you from impulsive decisions.
+                </p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {COOL_OFF_OPTIONS.map((opt) => (
                   <div key={opt.value}>
                     {showExclusionConfirm === opt.value ? (
@@ -278,6 +466,7 @@ export default function ResponsibleGamblingPage() {
                             size="sm"
                             onClick={() => handleSelfExclude(opt.value)}
                             className="flex-1"
+                            disabled={saving}
                           >
                             Confirm
                           </Button>
@@ -293,7 +482,7 @@ export default function ResponsibleGamblingPage() {
                       </div>
                     ) : (
                       <button
-                        onClick={() => setShowExclusionConfirm(opt.value)}
+                        onClick={() => user ? setShowExclusionConfirm(opt.value) : router.push('/login')}
                         className={cn(
                           'w-full rounded-xl border border-[var(--casino-border)] bg-[var(--casino-surface)] p-4',
                           'hover:border-[var(--casino-red)]/50 hover:bg-[var(--casino-red)]/5 transition-all cursor-pointer',
@@ -312,84 +501,118 @@ export default function ResponsibleGamblingPage() {
         </motion.div>
 
         {/* Loss Limit Card */}
-        <motion.div {...fadeUp} transition={{ delay: 0.15 }}>
-          <Card hover={false} className="p-6">
-            <div className="flex items-center gap-3 mb-3">
-              <TrendingDown className="w-6 h-6 text-[var(--casino-accent)]" />
-              <h2 className="text-xl font-semibold text-white">Daily Loss Limit</h2>
-            </div>
-            <p className="text-[var(--casino-text-muted)] mb-4 text-sm">
-              Set a maximum amount you&apos;re willing to lose per day. Leave empty to remove the limit.
-            </p>
-            <div className="flex gap-3">
-              <div className="relative flex-1">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--casino-text-muted)] font-semibold">
-                  $
-                </span>
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={lossInput}
-                  onChange={(e) => setLossInput(e.target.value)}
-                  placeholder="e.g. 100"
-                  className={cn(
-                    'w-full pl-8 pr-4 py-3 rounded-xl bg-[var(--casino-surface)] border border-[var(--casino-border)]',
-                    'text-white placeholder:text-[var(--casino-text-muted)]/50',
-                    'focus:outline-none focus:border-[var(--casino-accent)]/50 transition-colors'
-                  )}
-                />
+        {user && (
+          <motion.div {...fadeUp} transition={{ delay: 0.15 }}>
+            <Card hover={false} className="p-6">
+              <div className="flex items-center gap-3 mb-3">
+                <TrendingDown className="w-6 h-6 text-[var(--casino-accent)]" />
+                <h2 className="text-xl font-semibold text-white">Daily Loss Limit</h2>
               </div>
-              <Button variant="primary" onClick={handleSaveLossLimit}>
-                Save
-              </Button>
-            </div>
-            {settings.lossLimit && (
-              <p className="mt-3 text-sm text-[var(--casino-green)]">
-                Current limit: ${settings.lossLimit.toLocaleString()} / day
+              <p className="text-[var(--casino-text-muted)] mb-4 text-sm">
+                Set a maximum amount you&apos;re willing to lose per day. Leave empty to remove the limit.
               </p>
-            )}
-          </Card>
-        </motion.div>
+              <div className="flex gap-3">
+                <div className="relative flex-1">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--casino-text-muted)] font-semibold">
+                    $
+                  </span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={lossInput}
+                    onChange={(e) => setLossInput(e.target.value)}
+                    placeholder="e.g. 100"
+                    className={cn(
+                      'w-full pl-8 pr-4 py-3 rounded-xl bg-[var(--casino-surface)] border border-[var(--casino-border)]',
+                      'text-white placeholder:text-[var(--casino-text-muted)]/50',
+                      'focus:outline-none focus:border-[var(--casino-accent)]/50 transition-colors'
+                    )}
+                  />
+                </div>
+                <Button variant="primary" onClick={handleSaveLossLimit} disabled={saving}>
+                  {saving ? 'Saving...' : 'Save'}
+                </Button>
+              </div>
+              {limits.daily_loss_limit && (
+                <p className="mt-3 text-sm text-[var(--casino-green)]">
+                  Current limit: ${limits.daily_loss_limit.toLocaleString()} / day
+                </p>
+              )}
+            </Card>
+          </motion.div>
+        )}
 
         {/* Deposit Limit Card */}
-        <motion.div {...fadeUp} transition={{ delay: 0.2 }}>
+        {user && (
+          <motion.div {...fadeUp} transition={{ delay: 0.2 }}>
+            <Card hover={false} className="p-6">
+              <div className="flex items-center gap-3 mb-3">
+                <Wallet className="w-6 h-6 text-[var(--casino-accent)]" />
+                <h2 className="text-xl font-semibold text-white">Daily Deposit Limit</h2>
+              </div>
+              <p className="text-[var(--casino-text-muted)] mb-4 text-sm">
+                Cap how much you can deposit each day. Leave empty to remove the limit.
+              </p>
+              <div className="flex gap-3">
+                <div className="relative flex-1">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--casino-text-muted)] font-semibold">
+                    $
+                  </span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={depositInput}
+                    onChange={(e) => setDepositInput(e.target.value)}
+                    placeholder="e.g. 200"
+                    className={cn(
+                      'w-full pl-8 pr-4 py-3 rounded-xl bg-[var(--casino-surface)] border border-[var(--casino-border)]',
+                      'text-white placeholder:text-[var(--casino-text-muted)]/50',
+                      'focus:outline-none focus:border-[var(--casino-accent)]/50 transition-colors'
+                    )}
+                  />
+                </div>
+                <Button variant="primary" onClick={handleSaveDepositLimit} disabled={saving}>
+                  {saving ? 'Saving...' : 'Save'}
+                </Button>
+              </div>
+              {limits.daily_deposit_limit && (
+                <p className="mt-3 text-sm text-[var(--casino-green)]">
+                  Current limit: ${limits.daily_deposit_limit.toLocaleString()} / day
+                </p>
+              )}
+            </Card>
+          </motion.div>
+        )}
+
+        {/* Reality Check / Self-Assessment */}
+        <motion.div {...fadeUp} transition={{ delay: 0.22 }}>
           <Card hover={false} className="p-6">
-            <div className="flex items-center gap-3 mb-3">
-              <Wallet className="w-6 h-6 text-[var(--casino-accent)]" />
-              <h2 className="text-xl font-semibold text-white">Daily Deposit Limit</h2>
+            <div className="flex items-center gap-3 mb-4">
+              <BarChart3 className="w-6 h-6 text-[var(--casino-accent)]" />
+              <h2 className="text-xl font-semibold text-white">Self-Assessment</h2>
             </div>
             <p className="text-[var(--casino-text-muted)] mb-4 text-sm">
-              Cap how much you can deposit each day. Leave empty to remove the limit.
+              Ask yourself these questions honestly. If you answer &quot;yes&quot; to any of them, consider taking a break.
             </p>
-            <div className="flex gap-3">
-              <div className="relative flex-1">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--casino-text-muted)] font-semibold">
-                  $
-                </span>
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={depositInput}
-                  onChange={(e) => setDepositInput(e.target.value)}
-                  placeholder="e.g. 200"
-                  className={cn(
-                    'w-full pl-8 pr-4 py-3 rounded-xl bg-[var(--casino-surface)] border border-[var(--casino-border)]',
-                    'text-white placeholder:text-[var(--casino-text-muted)]/50',
-                    'focus:outline-none focus:border-[var(--casino-accent)]/50 transition-colors'
-                  )}
-                />
-              </div>
-              <Button variant="primary" onClick={handleSaveDepositLimit}>
-                Save
-              </Button>
+            <div className="space-y-3">
+              {[
+                'Do you spend more money gambling than you can afford to lose?',
+                'Do you borrow money or sell things to gamble?',
+                'Have you tried to win back money you have lost (chasing losses)?',
+                'Has gambling caused you any health problems, including stress or anxiety?',
+                'Have people criticized your gambling or told you that you have a problem?',
+                'Has your gambling caused any financial problems for you or your household?',
+              ].map((q, i) => (
+                <div key={i} className="flex items-start gap-3 p-3 rounded-lg bg-[var(--casino-surface)] border border-[var(--casino-border)]">
+                  <div className="w-6 h-6 rounded-full bg-[var(--casino-accent)]/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <span className="text-xs font-bold text-[var(--casino-accent)]">{i + 1}</span>
+                  </div>
+                  <p className="text-sm text-[var(--casino-text-muted)]">{q}</p>
+                </div>
+              ))}
             </div>
-            {settings.depositLimit && (
-              <p className="mt-3 text-sm text-[var(--casino-green)]">
-                Current limit: ${settings.depositLimit.toLocaleString()} / day
-              </p>
-            )}
           </Card>
         </motion.div>
 

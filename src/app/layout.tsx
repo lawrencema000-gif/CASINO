@@ -16,6 +16,15 @@ export const metadata: Metadata = {
   description:
     'Experience the ultimate online casino. Play Slots, Blackjack, Roulette, Poker, Crash, Plinko and more. Provably fair games with instant payouts.',
   keywords: ['casino', 'online gaming', 'slots', 'blackjack', 'roulette', 'poker', 'crash', 'plinko', 'fortuna'],
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'Fortuna Casino',
+  },
+  other: {
+    'mobile-web-app-capable': 'yes',
+  },
 }
 
 export default function RootLayout({
@@ -25,11 +34,16 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
+      <head>
+        <meta name="theme-color" content="#FFD700" />
+        <link rel="apple-touch-icon" href="/icons/icon-192.svg" />
+      </head>
       <body className={`${inter.variable} antialiased min-h-screen flex flex-col`}>
-        <Header />
-        <main className="flex-1 relative z-10">{children}</main>
-        <Footer />
-        <ClientProviders />
+        <ClientProviders>
+          <Header />
+          <main className="flex-1 relative z-10">{children}</main>
+          <Footer />
+        </ClientProviders>
       </body>
     </html>
   )

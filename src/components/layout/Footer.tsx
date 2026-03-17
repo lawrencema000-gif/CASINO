@@ -8,6 +8,7 @@ import {
   Banknote,
   ShieldCheck,
 } from 'lucide-react'
+import LanguageSwitcher from '../ui/LanguageSwitcher'
 
 const footerLinks = [
   { name: 'About', href: '/about' },
@@ -15,6 +16,7 @@ const footerLinks = [
   { name: 'Privacy Policy', href: '/privacy' },
   { name: 'Responsible Gambling', href: '/responsible-gambling' },
   { name: 'Provably Fair', href: '/provably-fair' },
+  { name: 'Tournaments', href: '/tournaments' },
   { name: 'Leaderboards', href: '/leaderboards' },
   { name: 'FAQ', href: '/faq' },
 ]
@@ -82,10 +84,13 @@ export default function Footer() {
             </p>
           </div>
 
-          {/* Copyright */}
-          <p className="text-xs text-[var(--casino-text-muted)]">
-            &copy; {new Date().getFullYear()} Fortuna Casino. All rights reserved.
-          </p>
+          {/* Language + Copyright */}
+          <div className="flex items-center gap-3">
+            <LanguageSwitcher />
+            <p className="text-xs text-[var(--casino-text-muted)]">
+              &copy; {new Date().getFullYear()} Fortuna Casino. All rights reserved.
+            </p>
+          </div>
         </div>
       </div>
     </footer>

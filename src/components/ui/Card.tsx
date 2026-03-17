@@ -10,9 +10,10 @@ interface CardProps {
   className?: string
   hover?: boolean
   glow?: 'gold' | 'purple' | 'green' | 'none'
+  onClick?: () => void
 }
 
-export default function Card({ children, header, footer, className, hover = true, glow = 'none' }: CardProps) {
+export default function Card({ children, header, footer, className, hover = true, glow = 'none', onClick }: CardProps) {
   const glowStyles = {
     gold: 'hover:shadow-[0_0_20px_rgba(201,162,39,0.15)]',
     purple: 'hover:shadow-[0_0_20px_rgba(108,43,217,0.15)]',
@@ -22,6 +23,7 @@ export default function Card({ children, header, footer, className, hover = true
 
   return (
     <div
+      onClick={onClick}
       className={cn(
         'bg-[var(--casino-card)] border border-[var(--casino-border)] rounded-2xl overflow-hidden card-shine',
         'transition-all duration-300',
