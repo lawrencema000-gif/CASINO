@@ -246,6 +246,9 @@ export default function AdminDashboard() {
             <Link href="/admin/promos" className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors flex items-center gap-1.5">
               <Crown className="w-3.5 h-3.5" /> Promos
             </Link>
+            <Link href="/admin/analytics" className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors flex items-center gap-1.5">
+              <BarChart3 className="w-3.5 h-3.5" /> Analytics
+            </Link>
             <Link href="/" className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors">
               Back to Casino
             </Link>
