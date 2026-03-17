@@ -848,13 +848,17 @@ export async function POST(request: NextRequest) {
           );
         }
 
-        // Update mission progress
+        // Update mission progress + referral qualification (fire-and-forget)
         supabaseAdmin.rpc('update_mission_progress', {
           p_user_id: user.id,
           p_game_type: gameType,
           p_bet_amount: betAmount,
           p_payout: payout,
           p_won: payout > 0,
+        }).then(() => {}, () => {});
+        supabaseAdmin.rpc('check_referral_qualification', {
+          p_referee_id: user.id,
+          p_wager_amount: betAmount,
         }).then(() => {}, () => {});
 
         return NextResponse.json({
@@ -1048,13 +1052,17 @@ export async function POST(request: NextRequest) {
           );
         }
 
-        // Update mission progress
+        // Update mission progress + referral qualification (fire-and-forget)
         supabaseAdmin.rpc('update_mission_progress', {
           p_user_id: user.id,
           p_game_type: existingGame.game_type,
           p_bet_amount: existingGame.bet_amount,
           p_payout: payout,
           p_won: payout > 0,
+        }).then(() => {}, () => {});
+        supabaseAdmin.rpc('check_referral_qualification', {
+          p_referee_id: user.id,
+          p_wager_amount: existingGame.bet_amount,
         }).then(() => {}, () => {});
 
         return NextResponse.json({
