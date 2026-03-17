@@ -89,7 +89,15 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const isAdmin = user?.email === 'admin@fortuna.casino'
+  const [isAdmin, setIsAdmin] = useState(false)
+
+  useEffect(() => {
+    if (authLoading || !user) return
+    // Check role via API instead of hardcoded email
+    fetch('/api/admin/stats').then(res => {
+      if (res.ok) setIsAdmin(true)
+    }).catch(() => {})
+  }, [authLoading, user])
 
   useEffect(() => {
     if (authLoading) return
@@ -225,18 +233,20 @@ export default function AdminDashboard() {
               <p className="text-sm text-gray-400">Fortuna Casino Management</p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <Link
-              href="/admin/users"
-              className="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors flex items-center gap-2"
-            >
-              <Users className="w-4 h-4" />
-              Manage Users
+          <div className="flex items-center gap-2 flex-wrap">
+            <Link href="/admin/users" className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors flex items-center gap-1.5">
+              <Users className="w-3.5 h-3.5" /> Users
             </Link>
-            <Link
-              href="/"
-              className="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors"
-            >
+            <Link href="/admin/support" className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors flex items-center gap-1.5">
+              <Clock className="w-3.5 h-3.5" /> Support
+            </Link>
+            <Link href="/admin/fraud" className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors flex items-center gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5" /> Fraud
+            </Link>
+            <Link href="/admin/promos" className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors flex items-center gap-1.5">
+              <Crown className="w-3.5 h-3.5" /> Promos
+            </Link>
+            <Link href="/" className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors">
               Back to Casino
             </Link>
           </div>

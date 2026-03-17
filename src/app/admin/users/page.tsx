@@ -82,7 +82,14 @@ export default function AdminUsersPage() {
   const router = useRouter()
   const supabase = createClient()
 
-  const isAdmin = user?.email === 'admin@fortuna.casino'
+  const [isAdmin, setIsAdmin] = useState(false)
+
+  useEffect(() => {
+    if (authLoading || !user) return
+    fetch('/api/admin/stats').then(res => {
+      if (res.ok) setIsAdmin(true)
+    }).catch(() => {})
+  }, [authLoading, user])
 
   const [users, setUsers] = useState<UserProfile[]>([])
   const [loading, setLoading] = useState(true)

@@ -21,8 +21,7 @@ export async function GET() {
       .select("role")
       .eq("id", user.id)
       .single();
-    const isAdmin =
-      adminProfile?.role === "admin" || user.email === "admin@fortuna.casino";
+    const isAdmin = adminProfile?.role === "admin" || adminProfile?.role === "super_admin";
     if (!isAdmin) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
