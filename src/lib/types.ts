@@ -9,6 +9,10 @@ export type GameType =
   | 'poker'
   | 'lottery'
   | 'jackpot'
+  | 'mines'
+  | 'keno'
+  | 'limbo'
+  | 'hilo'
 
 export type VipTier = 'bronze' | 'silver' | 'gold' | 'platinum' | 'diamond'
 
