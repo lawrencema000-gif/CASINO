@@ -866,6 +866,10 @@ export async function POST(request: NextRequest) {
           p_user_id: user.id,
           p_xp: bpXp,
         }).then(() => {}, () => {});
+        // Check VIP tier upgrade based on total_wagered
+        supabaseAdmin.rpc('check_vip_tier', {
+          p_user_id: user.id,
+        }).then(() => {}, () => {});
 
         return NextResponse.json({
           gameId,
@@ -1074,6 +1078,10 @@ export async function POST(request: NextRequest) {
         supabaseAdmin.rpc('add_battle_pass_xp', {
           p_user_id: user.id,
           p_xp: bpXp2,
+        }).then(() => {}, () => {});
+        // Check VIP tier upgrade based on total_wagered
+        supabaseAdmin.rpc('check_vip_tier', {
+          p_user_id: user.id,
         }).then(() => {}, () => {});
 
         return NextResponse.json({

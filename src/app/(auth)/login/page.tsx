@@ -178,16 +178,24 @@ function LoginForm() {
           </div>
         </div>
 
-        {/* Remember Me */}
-        <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-400">
-          <input
-            type="checkbox"
-            checked={rememberMe}
-            onChange={(e) => setRememberMe(e.target.checked)}
-            className="h-4 w-4 rounded border-zinc-600 bg-[#111118] accent-[#FFD700] focus:ring-[#FFD700]/25"
-          />
-          <span>Remember me</span>
-        </label>
+        {/* Remember Me + Forgot Password */}
+        <div className="flex items-center justify-between">
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-400">
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              className="h-4 w-4 rounded border-zinc-600 bg-[#111118] accent-[#FFD700] focus:ring-[#FFD700]/25"
+            />
+            <span>Remember me</span>
+          </label>
+          <Link
+            href="/reset-password"
+            className="text-sm text-zinc-500 transition-colors hover:text-[#FFD700]"
+          >
+            Forgot password?
+          </Link>
+        </div>
 
         {/* Sign In Button */}
         <button
