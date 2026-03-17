@@ -132,26 +132,31 @@ export function useAuth() {
     }
 
     if (data.user) {
-      // Create profile with 10,000 starting credits
-      const { error: profileError } = await supabase.from("profiles").insert({
-        id: data.user.id,
-        username,
-        balance: 10000,
-        total_wagered: 0,
-        total_won: 0,
-        level: 1,
-        exp: 0,
-        vip_tier: "bronze",
-      });
+      // Create profile via server API (bypasses RLS)
+      try {
+        const profileRes = await fetch("/api/auth/create-profile", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username }),
+        });
 
-      if (profileError) {
-        console.error("Error creating profile:", profileError);
+        if (!profileRes.ok) {
+          const profileData = await profileRes.json();
+          setState((prev) => ({
+            ...prev,
+            loading: false,
+            error: profileData.error || "Profile setup failed.",
+          }));
+          return { error: profileData.error || "Profile setup failed" };
+        }
+      } catch (err) {
+        console.error("Error creating profile:", err);
         setState((prev) => ({
           ...prev,
           loading: false,
           error: "Account created but profile setup failed. Please contact support.",
         }));
-        return { error: profileError.message };
+        return { error: "Profile setup failed" };
       }
 
       const profile = await fetchProfile(data.user.id);

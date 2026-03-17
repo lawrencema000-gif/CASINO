@@ -129,36 +129,19 @@ export default function RegisterPage() {
       }
 
       if (data.user) {
-        // Create profile with 10,000 starting credits
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .insert({
-            id: data.user.id,
-            username,
-            balance: 10000,
-            total_wagered: 0,
-            total_won: 0,
-            level: 1,
-            exp: 0,
-            vip_tier: 'bronze',
-          })
+        // Create profile via server API (bypasses RLS)
+        const profileRes = await fetch('/api/auth/create-profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username }),
+        })
 
-        if (profileError) {
-          setError(
-            'Account created but profile setup failed. Please contact support.'
-          )
+        if (!profileRes.ok) {
+          const profileData = await profileRes.json()
+          setError(profileData.error || 'Account created but profile setup failed.')
           setLoading(false)
           return
         }
-
-        // Record the signup bonus transaction
-        await supabase.from('transactions').insert({
-          player_id: data.user.id,
-          type: 'bonus',
-          amount: 10000,
-          balance_after: 10000,
-          description: 'Welcome bonus - 10,000 free credits',
-        })
 
         // Check if email confirmation is required
         if (data.session) {
