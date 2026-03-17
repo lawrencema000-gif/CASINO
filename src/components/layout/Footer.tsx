@@ -18,6 +18,8 @@ const footerLinks = [
   { name: 'Provably Fair', href: '/provably-fair' },
   { name: 'Tournaments', href: '/tournaments' },
   { name: 'Leaderboards', href: '/leaderboards' },
+  { name: 'Credit Store', href: '/store' },
+  { name: 'Achievements', href: '/achievements' },
   { name: 'FAQ', href: '/faq' },
 ]
 

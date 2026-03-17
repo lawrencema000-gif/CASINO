@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -61,7 +61,7 @@ const faqItems = [
   },
 ]
 
-export default function StorePage() {
+function StoreContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { user, loading: authLoading } = useAuth()
@@ -432,5 +432,13 @@ export default function StorePage() {
         </motion.div>
       </div>
     </div>
+  )
+}
+
+export default function StorePage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[var(--casino-bg)] flex items-center justify-center"><div className="text-[var(--casino-text-muted)]">Loading store...</div></div>}>
+      <StoreContent />
+    </Suspense>
   )
 }

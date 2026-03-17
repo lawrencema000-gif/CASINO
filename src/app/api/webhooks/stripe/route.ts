@@ -2,7 +2,7 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
-import { stripe } from '@/lib/stripe/config'
+import { getStripeOrThrow } from '@/lib/stripe/config'
 import { supabaseAdmin } from '@/lib/supabase/admin'
 import { getPackageById } from '@/lib/stripe/packages'
 import type Stripe from 'stripe'
@@ -18,7 +18,8 @@ export async function POST(request: NextRequest) {
   let event: Stripe.Event
 
   try {
-    event = stripe.webhooks.constructEvent(
+    const stripeClient = getStripeOrThrow()
+    event = stripeClient.webhooks.constructEvent(
       body,
       signature,
       process.env.STRIPE_WEBHOOK_SECRET!

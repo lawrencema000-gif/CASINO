@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { stripe } from '@/lib/stripe/config'
+import { getStripeOrThrow } from '@/lib/stripe/config'
 import { getPackageById } from '@/lib/stripe/packages'
 
 export async function POST(request: NextRequest) {
@@ -28,7 +28,8 @@ export async function POST(request: NextRequest) {
 
     const origin = request.headers.get('origin') || process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
 
-    const session = await stripe.checkout.sessions.create({
+    const stripeClient = getStripeOrThrow()
+    const session = await stripeClient.checkout.sessions.create({
       mode: 'payment',
       payment_method_types: ['card'],
       line_items: [

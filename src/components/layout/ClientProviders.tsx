@@ -2,6 +2,7 @@
 
 import dynamic from 'next/dynamic'
 import { I18nProvider } from '@/lib/i18n/context'
+import PostHogProvider from '@/components/providers/PostHogProvider'
 
 const SessionTimer = dynamic(
   () => import('@/components/ui/SessionTimer'),
@@ -20,13 +21,15 @@ const LiveChat = dynamic(
 
 export default function ClientProviders({ children }: { children?: React.ReactNode }) {
   return (
-    <I18nProvider>
-      {children}
-      <SessionTimer />
-      <RealityCheck />
-      <LiveChat />
-      <ServiceWorkerRegistrar />
-    </I18nProvider>
+    <PostHogProvider>
+      <I18nProvider>
+        {children}
+        <SessionTimer />
+        <RealityCheck />
+        <LiveChat />
+        <ServiceWorkerRegistrar />
+      </I18nProvider>
+    </PostHogProvider>
   )
 }
 
