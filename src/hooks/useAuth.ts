@@ -163,6 +163,17 @@ export function useAuth() {
     return { error: null };
   };
 
+  const signInWithOAuth = async (provider: 'google' | 'github' | 'discord') => {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider,
+      options: {
+        redirectTo: `${typeof window !== 'undefined' ? window.location.origin : ''}/auth/callback`,
+      },
+    });
+    if (error) return { error: error.message };
+    return { error: null };
+  };
+
   const signOut = async () => {
     setState((prev) => ({ ...prev, loading: true }));
     await supabase.auth.signOut();
@@ -183,6 +194,7 @@ export function useAuth() {
     error: state.error,
     signIn,
     signUp,
+    signInWithOAuth,
     signOut,
     refreshProfile,
   };
