@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { User } from "@supabase/supabase-js";
 import type { Profile } from "@/lib/supabase/database.types";
+import { registerDevice } from "@/lib/fraud/device-fingerprint";
 
 interface AuthState {
   user: User | null;
@@ -49,6 +50,8 @@ export function useAuth() {
         if (user) {
           const profile = await fetchProfile(user.id);
           setState({ user, profile, loading: false, error: null });
+          // Register device fingerprint in background
+          registerDevice().catch(() => {});
         } else {
           setState({ user: null, profile: null, loading: false, error: null });
         }
@@ -99,6 +102,8 @@ export function useAuth() {
 
     const profile = await fetchProfile(data.user.id);
     setState({ user: data.user, profile, loading: false, error: null });
+    // Register device fingerprint on sign-in
+    registerDevice().catch(() => {});
     return { error: null };
   };
 
@@ -151,6 +156,8 @@ export function useAuth() {
 
       const profile = await fetchProfile(data.user.id);
       setState({ user: data.user, profile, loading: false, error: null });
+      // Register device fingerprint on sign-up
+      registerDevice().catch(() => {});
     }
 
     return { error: null };
