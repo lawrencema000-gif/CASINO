@@ -848,6 +848,15 @@ export async function POST(request: NextRequest) {
           );
         }
 
+        // Update mission progress
+        supabaseAdmin.rpc('update_mission_progress', {
+          p_user_id: user.id,
+          p_game_type: gameType,
+          p_bet_amount: betAmount,
+          p_payout: payout,
+          p_won: payout > 0,
+        }).then(() => {}, () => {});
+
         return NextResponse.json({
           gameId,
           result,
@@ -1038,6 +1047,15 @@ export async function POST(request: NextRequest) {
             { status: 500 }
           );
         }
+
+        // Update mission progress
+        supabaseAdmin.rpc('update_mission_progress', {
+          p_user_id: user.id,
+          p_game_type: existingGame.game_type,
+          p_bet_amount: existingGame.bet_amount,
+          p_payout: payout,
+          p_won: payout > 0,
+        }).then(() => {}, () => {});
 
         return NextResponse.json({
           gameId: body.gameId,
