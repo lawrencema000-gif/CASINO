@@ -1,0 +1,16 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/reconciliation",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/expire-bonuses",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/sla-check",
+      "schedule": "*/15 * * * *"
+    }
+  ]
+}
