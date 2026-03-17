@@ -860,6 +860,12 @@ export async function POST(request: NextRequest) {
           p_referee_id: user.id,
           p_wager_amount: betAmount,
         }).then(() => {}, () => {});
+        // Battle pass XP: 10 base + 5 for wins + 2 per 100 wagered
+        const bpXp = 10 + (payout > 0 ? 5 : 0) + Math.floor(betAmount / 100) * 2;
+        supabaseAdmin.rpc('add_battle_pass_xp', {
+          p_user_id: user.id,
+          p_xp: bpXp,
+        }).then(() => {}, () => {});
 
         return NextResponse.json({
           gameId,
@@ -1063,6 +1069,11 @@ export async function POST(request: NextRequest) {
         supabaseAdmin.rpc('check_referral_qualification', {
           p_referee_id: user.id,
           p_wager_amount: existingGame.bet_amount,
+        }).then(() => {}, () => {});
+        const bpXp2 = 10 + (payout > 0 ? 5 : 0) + Math.floor(existingGame.bet_amount / 100) * 2;
+        supabaseAdmin.rpc('add_battle_pass_xp', {
+          p_user_id: user.id,
+          p_xp: bpXp2,
         }).then(() => {}, () => {});
 
         return NextResponse.json({
