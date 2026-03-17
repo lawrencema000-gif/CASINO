@@ -229,13 +229,13 @@ export default function Header() {
               </div>
             ) : (
               <div className="hidden sm:flex items-center gap-2">
-                <Link href="/auth/login">
+                <Link href="/login">
                   <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg text-[var(--text-secondary)] border border-[var(--border-color)] hover:text-white hover:border-[var(--gold)]/50 transition-all cursor-pointer">
                     <LogIn className="w-3.5 h-3.5" />
                     Login
                   </button>
                 </Link>
-                <Link href="/auth/register">
+                <Link href="/register">
                   <button className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-gradient-to-r from-[var(--gold-dark)] via-[var(--gold)] to-[var(--gold-light)] text-black hover:shadow-[0_0_20px_rgba(255,215,0,0.3)] transition-all cursor-pointer">
                     <UserPlus className="w-3.5 h-3.5" />
                     Register
@@ -289,13 +289,13 @@ export default function Header() {
 
               {!isAuthed && (
                 <div className="flex gap-2 pt-3 mt-2 border-t border-[var(--border-color)]">
-                  <Link href="/auth/login" className="flex-1" onClick={() => setMobileOpen(false)}>
+                  <Link href="/login" className="flex-1" onClick={() => setMobileOpen(false)}>
                     <button className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-sm font-medium rounded-xl text-[var(--text-secondary)] border border-[var(--border-color)] hover:text-white hover:border-[var(--gold)]/50 transition-all cursor-pointer">
                       <LogIn className="w-4 h-4" />
                       Login
                     </button>
                   </Link>
-                  <Link href="/auth/register" className="flex-1" onClick={() => setMobileOpen(false)}>
+                  <Link href="/register" className="flex-1" onClick={() => setMobileOpen(false)}>
                     <button className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-sm font-semibold rounded-xl bg-gradient-to-r from-[var(--gold-dark)] via-[var(--gold)] to-[var(--gold-light)] text-black cursor-pointer">
                       <UserPlus className="w-4 h-4" />
                       Register

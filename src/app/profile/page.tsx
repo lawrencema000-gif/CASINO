@@ -36,8 +36,15 @@ const VIP_TIERS = [
 
 export default function ProfilePage() {
   const router = useRouter()
-  const { user, profile, refreshProfile } = useAuth()
+  const { user, profile, refreshProfile, loading: authLoading } = useAuth()
   const { balance } = useBalance(user?.id)
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.push('/login?redirectTo=/profile')
+    }
+  }, [user, authLoading, router])
 
   const [showPasswordModal, setShowPasswordModal] = useState(false)
   const [showLimitsModal, setShowLimitsModal] = useState(false)
@@ -81,16 +88,22 @@ export default function ProfilePage() {
       setGamesLoading(false)
       return
     }
-    const supabase = createClient()
-    const { data } = await supabase
-      .from('games')
-      .select('id, game_type, bet_amount, payout, multiplier, settled, created_at')
-      .eq('player_id', user.id)
-      .order('created_at', { ascending: false })
-      .limit(20)
+    try {
+      const supabase = createClient()
+      const { data, error } = await supabase
+        .from('games')
+        .select('id, game_type, bet_amount, payout, multiplier, settled, created_at')
+        .eq('player_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(20)
 
-    if (data) setRecentGames(data)
-    setGamesLoading(false)
+      if (error) throw error
+      if (data) setRecentGames(data)
+    } catch (err) {
+      console.error('Failed to fetch game history:', err)
+    } finally {
+      setGamesLoading(false)
+    }
   }, [user])
 
   useEffect(() => {

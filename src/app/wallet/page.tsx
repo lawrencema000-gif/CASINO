@@ -46,8 +46,15 @@ const DEPOSIT_OPTIONS = [1000, 5000, 10000, 50000]
 
 export default function WalletPage() {
   const router = useRouter()
-  const { user, refreshProfile } = useAuth()
+  const { user, refreshProfile, loading: authLoading } = useAuth()
   const { balance, purchasedBalance, bonusBalance, refreshBalance } = useBalance(user?.id)
+
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.push('/login?redirectTo=/wallet')
+    }
+  }, [user, authLoading, router])
 
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [txLoading, setTxLoading] = useState(true)
@@ -58,6 +65,7 @@ export default function WalletPage() {
   const [depositingAmount, setDepositingAmount] = useState<number | null>(null)
   const [withdrawAmount, setWithdrawAmount] = useState('')
   const [withdrawing, setWithdrawing] = useState(false)
+  const [walletError, setWalletError] = useState<string | null>(null)
 
   // Daily bonus state
   const [dailyBonus, setDailyBonus] = useState<DailyBonusData | null>(null)
@@ -129,6 +137,7 @@ export default function WalletPage() {
   const handleDeposit = async (amount: number) => {
     if (!user) return
     setDepositingAmount(amount)
+    setWalletError(null)
     try {
       const res = await fetch('/api/wallet', {
         method: 'POST',
@@ -136,13 +145,13 @@ export default function WalletPage() {
         body: JSON.stringify({ action: 'deposit', amount })
       })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error)
+      if (!res.ok) throw new Error(data.error || 'Deposit failed')
       refreshBalance()
       await fetchTransactions()
       setShowDepositSuccess(true)
       setTimeout(() => setShowDepositSuccess(false), 2000)
     } catch (err) {
-      console.error('Deposit error:', err)
+      setWalletError(err instanceof Error ? err.message : 'Deposit failed. Please try again.')
     } finally {
       setDepositingAmount(null)
     }
@@ -154,6 +163,7 @@ export default function WalletPage() {
     const amount = parseFloat(withdrawAmount)
     if (isNaN(amount) || amount <= 0 || amount > balance) return
     setWithdrawing(true)
+    setWalletError(null)
     try {
       const res = await fetch('/api/wallet', {
         method: 'POST',
@@ -161,12 +171,12 @@ export default function WalletPage() {
         body: JSON.stringify({ action: 'withdraw', amount: Math.floor(amount) })
       })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error)
+      if (!res.ok) throw new Error(data.error || 'Withdrawal failed')
       refreshBalance()
       await fetchTransactions()
       setWithdrawAmount('')
     } catch (err) {
-      console.error('Withdraw error:', err)
+      setWalletError(err instanceof Error ? err.message : 'Withdrawal failed. Please try again.')
     } finally {
       setWithdrawing(false)
     }
@@ -183,13 +193,13 @@ export default function WalletPage() {
         body: JSON.stringify({ action: 'collect' })
       })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error)
+      if (!res.ok) throw new Error(data.error || 'Bonus claim failed')
       refreshBalance()
       await fetchTransactions()
       await fetchDailyBonus()
       setCanClaimBonus(false)
     } catch (err) {
-      console.error('Bonus claim error:', err)
+      setWalletError(err instanceof Error ? err.message : 'Bonus claim failed. Please try again.')
     } finally {
       setClaimingBonus(false)
     }
@@ -209,6 +219,18 @@ export default function WalletPage() {
           <Wallet className="w-7 h-7 text-[var(--casino-accent)]" />
           <h1 className="text-2xl font-bold text-white">Wallet</h1>
         </div>
+
+        {/* Error Display */}
+        {walletError && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-4 rounded-lg border border-[var(--casino-red)]/30 bg-[var(--casino-red)]/10 px-4 py-3 text-sm text-[var(--casino-red)] flex items-center justify-between"
+          >
+            <span>{walletError}</span>
+            <button onClick={() => setWalletError(null)} className="text-[var(--casino-red)] hover:text-white ml-2 cursor-pointer">✕</button>
+          </motion.div>
+        )}
 
         {/* Balance Card */}
         <motion.div

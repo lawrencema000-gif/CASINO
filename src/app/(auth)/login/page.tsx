@@ -19,7 +19,9 @@ function LoginForm() {
 
   const router = useRouter()
   const searchParams = useSearchParams()
-  const redirectTo = searchParams.get('redirectTo') || '/'
+  // Sanitize redirectTo — only allow relative paths (prevent open redirect)
+  const rawRedirect = searchParams.get('redirectTo') || '/'
+  const redirectTo = rawRedirect.startsWith('/') && !rawRedirect.startsWith('//') ? rawRedirect : '/'
 
   // On mount: check localStorage for saved email
   useEffect(() => {
@@ -51,13 +53,14 @@ function LoginForm() {
         return
       }
 
-      // Handle remember me
+      // Handle remember me + clear demo mode
       if (typeof window !== 'undefined') {
         if (rememberMe) {
           localStorage.setItem(SAVED_EMAIL_KEY, email)
         } else {
           localStorage.removeItem(SAVED_EMAIL_KEY)
         }
+        localStorage.removeItem('demo_mode')
       }
 
       router.push(redirectTo)
