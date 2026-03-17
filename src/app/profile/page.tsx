@@ -41,6 +41,15 @@ export default function ProfilePage() {
 
   const [showPasswordModal, setShowPasswordModal] = useState(false)
   const [showLimitsModal, setShowLimitsModal] = useState(false)
+  const [show2FAModal, setShow2FAModal] = useState(false)
+  const [mfaEnabled, setMfaEnabled] = useState(false)
+  const [mfaFactorId, setMfaFactorId] = useState<string | null>(null)
+  const [mfaQrCode, setMfaQrCode] = useState('')
+  const [mfaSecret, setMfaSecret] = useState('')
+  const [mfaCode, setMfaCode] = useState('')
+  const [mfaLoading, setMfaLoading] = useState(false)
+  const [mfaError, setMfaError] = useState<string | null>(null)
+  const [mfaSuccess, setMfaSuccess] = useState(false)
   const [editingUsername, setEditingUsername] = useState(false)
   const [newUsername, setNewUsername] = useState('')
   const [usernameSaving, setUsernameSaving] = useState(false)
@@ -87,6 +96,91 @@ export default function ProfilePage() {
   useEffect(() => {
     fetchGames()
   }, [fetchGames])
+
+  // Check MFA status
+  useEffect(() => {
+    fetch('/api/auth/mfa', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'status' }),
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.enabled) {
+          setMfaEnabled(true)
+          const verified = data.factors?.find((f: { status: string }) => f.status === 'verified')
+          if (verified) setMfaFactorId(verified.id)
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  const handleEnroll2FA = async () => {
+    setMfaLoading(true)
+    setMfaError(null)
+    try {
+      const res = await fetch('/api/auth/mfa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'enroll' }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setMfaError(data.error); return }
+      setMfaFactorId(data.factorId)
+      setMfaQrCode(data.qrCode)
+      setMfaSecret(data.secret)
+    } catch {
+      setMfaError('Failed to start enrollment')
+    } finally {
+      setMfaLoading(false)
+    }
+  }
+
+  const handleVerify2FA = async () => {
+    if (!mfaCode || mfaCode.length !== 6) { setMfaError('Enter a 6-digit code'); return }
+    setMfaLoading(true)
+    setMfaError(null)
+    try {
+      const res = await fetch('/api/auth/mfa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'verify', factorId: mfaFactorId, code: mfaCode }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setMfaError(data.error); return }
+      setMfaEnabled(true)
+      setMfaSuccess(true)
+      setMfaQrCode('')
+      setMfaSecret('')
+      setMfaCode('')
+    } catch {
+      setMfaError('Verification failed')
+    } finally {
+      setMfaLoading(false)
+    }
+  }
+
+  const handleDisable2FA = async () => {
+    if (!mfaFactorId) return
+    setMfaLoading(true)
+    setMfaError(null)
+    try {
+      const res = await fetch('/api/auth/mfa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'unenroll', factorId: mfaFactorId }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setMfaError(data.error); return }
+      setMfaEnabled(false)
+      setMfaFactorId(null)
+      setMfaSuccess(false)
+    } catch {
+      setMfaError('Failed to disable 2FA')
+    } finally {
+      setMfaLoading(false)
+    }
+  }
 
   // Compute stats from profile data (games_played may not exist on profile type, fall back to recent games count)
   const gamesPlayed = (profile as Record<string, unknown> | null)?.games_played as number ?? recentGames.length
@@ -458,6 +552,19 @@ export default function ProfilePage() {
                     <ChevronRight className="w-4 h-4 text-[var(--casino-text-muted)] group-hover:text-white transition-colors" />
                   </button>
                   <button
+                    onClick={() => { setShow2FAModal(true); setMfaError(null); setMfaSuccess(false); setMfaCode('') }}
+                    className="w-full flex items-center justify-between py-3 px-3 rounded-lg hover:bg-[var(--casino-surface)] transition-colors cursor-pointer group"
+                  >
+                    <span className="flex items-center gap-2 text-sm text-[var(--casino-text)]">
+                      <Zap className="w-4 h-4 text-[var(--casino-text-muted)]" />
+                      Two-Factor Auth
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      {mfaEnabled && <span className="text-xs text-[var(--casino-green)]">Enabled</span>}
+                      <ChevronRight className="w-4 h-4 text-[var(--casino-text-muted)] group-hover:text-white transition-colors" />
+                    </span>
+                  </button>
+                  <button
                     onClick={() => setShowLimitsModal(true)}
                     className="w-full flex items-center justify-between py-3 px-3 rounded-lg hover:bg-[var(--casino-surface)] transition-colors cursor-pointer group"
                   >
@@ -523,6 +630,95 @@ export default function ProfilePage() {
           >
             Update Password
           </Button>
+        </div>
+      </Modal>
+
+      {/* 2FA Modal */}
+      <Modal open={show2FAModal} onClose={() => { setShow2FAModal(false); setMfaQrCode(''); setMfaSecret('') }} title="Two-Factor Authentication">
+        <div className="space-y-4">
+          {mfaError && (
+            <div className="rounded-lg border border-[#EF4444]/30 bg-[#EF4444]/10 px-4 py-2 text-sm text-[#EF4444]">
+              {mfaError}
+            </div>
+          )}
+          {mfaSuccess && (
+            <div className="rounded-lg border border-[#00FF88]/30 bg-[#00FF88]/10 px-4 py-2 text-sm text-[#00FF88]">
+              2FA {mfaEnabled ? 'enabled' : 'disabled'} successfully!
+            </div>
+          )}
+
+          {mfaEnabled && !mfaQrCode ? (
+            <>
+              <div className="flex items-center gap-3 p-4 rounded-xl bg-[var(--casino-green)]/10 border border-[var(--casino-green)]/20">
+                <Check className="w-5 h-5 text-[var(--casino-green)]" />
+                <div>
+                  <p className="text-sm font-medium text-white">2FA is enabled</p>
+                  <p className="text-xs text-[var(--casino-text-muted)]">Your account is protected with an authenticator app</p>
+                </div>
+              </div>
+              <Button
+                variant="danger"
+                size="lg"
+                className="w-full"
+                loading={mfaLoading}
+                onClick={handleDisable2FA}
+              >
+                Disable 2FA
+              </Button>
+            </>
+          ) : mfaQrCode ? (
+            <>
+              <p className="text-sm text-[var(--casino-text-muted)]">
+                Scan this QR code with your authenticator app (Google Authenticator, Authy, etc.):
+              </p>
+              <div className="flex justify-center p-4 bg-white rounded-xl">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={mfaQrCode} alt="2FA QR Code" className="w-48 h-48" />
+              </div>
+              <div className="text-center">
+                <p className="text-xs text-[var(--casino-text-muted)] mb-1">Or enter this code manually:</p>
+                <code className="text-xs text-[var(--casino-accent)] font-mono bg-[var(--casino-surface)] px-3 py-1.5 rounded-lg select-all">
+                  {mfaSecret}
+                </code>
+              </div>
+              <div>
+                <label className="text-sm text-[var(--casino-text-muted)] mb-1 block">Enter 6-digit code from your app</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, ''))}
+                  placeholder="000000"
+                  className="w-full bg-[var(--casino-surface)] border border-[var(--casino-border)] rounded-xl px-4 py-3 text-white text-center text-2xl tracking-[0.5em] font-mono focus:outline-none focus:border-[var(--casino-accent)] transition-colors"
+                />
+              </div>
+              <Button
+                variant="primary"
+                size="lg"
+                className="w-full"
+                loading={mfaLoading}
+                onClick={handleVerify2FA}
+              >
+                Verify & Enable 2FA
+              </Button>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-[var(--casino-text-muted)]">
+                Add an extra layer of security to your account. You&apos;ll need an authenticator app like Google Authenticator or Authy.
+              </p>
+              <Button
+                variant="primary"
+                size="lg"
+                className="w-full"
+                loading={mfaLoading}
+                onClick={handleEnroll2FA}
+              >
+                Set Up 2FA
+              </Button>
+            </>
+          )}
         </div>
       </Modal>
 
